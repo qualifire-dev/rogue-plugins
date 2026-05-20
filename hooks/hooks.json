@@ -1,0 +1,182 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -r /etc/rogue/env ] && . /etc/rogue/env; [ -r \"$HOME/.rogue-env\" ] && . \"$HOME/.rogue-env\"; [ -z \"$ROGUE_API_KEY\" ] && printf '{\"systemMessage\": \"[Rogue Security] Not configured. Run /rogue:setup to connect your API key.\"}' || true",
+            "timeout": 2
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -r /etc/rogue/env ] && . /etc/rogue/env; [ -r \"$HOME/.rogue-env\" ] && . \"$HOME/.rogue-env\"; [ -n \"$ROGUE_API_KEY\" ] || { echo '{}'; exit 0; }; curl -sS -X POST ${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/claude -H \"x-rogue-api-key: $ROGUE_API_KEY\" -H \"x-rogue-event: SessionStart\" -H \"x-rogue-actor-email: $ROGUE_ACTOR_EMAIL\" -H \"x-rogue-actor-name: $ROGUE_ACTOR_NAME\" -H 'Content-Type: application/json' --data-binary @- --max-time 10 || echo '{}'",
+            "timeout": 12
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -r /etc/rogue/env ] && . /etc/rogue/env; [ -r \"$HOME/.rogue-env\" ] && . \"$HOME/.rogue-env\"; [ -n \"$ROGUE_API_KEY\" ] || { echo '{}'; exit 0; }; curl -sS -X POST ${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/claude -H \"x-rogue-api-key: $ROGUE_API_KEY\" -H \"x-rogue-event: UserPromptSubmit\" -H \"x-rogue-actor-email: $ROGUE_ACTOR_EMAIL\" -H \"x-rogue-actor-name: $ROGUE_ACTOR_NAME\" -H 'Content-Type: application/json' --data-binary @- --max-time 10 || echo '{}'",
+            "timeout": 7
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -r /etc/rogue/env ] && . /etc/rogue/env; [ -r \"$HOME/.rogue-env\" ] && . \"$HOME/.rogue-env\"; [ -n \"$ROGUE_API_KEY\" ] || { echo '{}'; exit 0; }; curl -sS -X POST ${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/claude -H \"x-rogue-api-key: $ROGUE_API_KEY\" -H \"x-rogue-event: PreToolUse\" -H \"x-rogue-actor-email: $ROGUE_ACTOR_EMAIL\" -H \"x-rogue-actor-name: $ROGUE_ACTOR_NAME\" -H 'Content-Type: application/json' --data-binary @- --max-time 10 || echo '{}'",
+            "timeout": 7
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -r /etc/rogue/env ] && . /etc/rogue/env; [ -r \"$HOME/.rogue-env\" ] && . \"$HOME/.rogue-env\"; [ -n \"$ROGUE_API_KEY\" ] || { echo '{}'; exit 0; }; curl -sS -X POST ${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/claude -H \"x-rogue-api-key: $ROGUE_API_KEY\" -H \"x-rogue-event: PostToolUse\" -H \"x-rogue-actor-email: $ROGUE_ACTOR_EMAIL\" -H \"x-rogue-actor-name: $ROGUE_ACTOR_NAME\" -H 'Content-Type: application/json' --data-binary @- --max-time 10 || echo '{}'",
+            "timeout": 12
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -r /etc/rogue/env ] && . /etc/rogue/env; [ -r \"$HOME/.rogue-env\" ] && . \"$HOME/.rogue-env\"; [ -n \"$ROGUE_API_KEY\" ] || { echo '{}'; exit 0; }; curl -sS -X POST ${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/claude -H \"x-rogue-api-key: $ROGUE_API_KEY\" -H \"x-rogue-event: PostToolUseFailure\" -H \"x-rogue-actor-email: $ROGUE_ACTOR_EMAIL\" -H \"x-rogue-actor-name: $ROGUE_ACTOR_NAME\" -H 'Content-Type: application/json' --data-binary @- --max-time 10 || echo '{}'",
+            "timeout": 12
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -r /etc/rogue/env ] && . /etc/rogue/env; [ -r \"$HOME/.rogue-env\" ] && . \"$HOME/.rogue-env\"; [ -n \"$ROGUE_API_KEY\" ] || { echo '{}'; exit 0; }; curl -sS -X POST ${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/claude -H \"x-rogue-api-key: $ROGUE_API_KEY\" -H \"x-rogue-event: PermissionRequest\" -H \"x-rogue-actor-email: $ROGUE_ACTOR_EMAIL\" -H \"x-rogue-actor-name: $ROGUE_ACTOR_NAME\" -H 'Content-Type: application/json' --data-binary @- --max-time 10 || echo '{}'",
+            "timeout": 7
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -r /etc/rogue/env ] && . /etc/rogue/env; [ -r \"$HOME/.rogue-env\" ] && . \"$HOME/.rogue-env\"; [ -n \"$ROGUE_API_KEY\" ] || { echo '{}'; exit 0; }; curl -sS -X POST ${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/claude -H \"x-rogue-api-key: $ROGUE_API_KEY\" -H \"x-rogue-event: Stop\" -H \"x-rogue-actor-email: $ROGUE_ACTOR_EMAIL\" -H \"x-rogue-actor-name: $ROGUE_ACTOR_NAME\" -H 'Content-Type: application/json' --data-binary @- --max-time 10 || echo '{}'",
+            "timeout": 12
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -r /etc/rogue/env ] && . /etc/rogue/env; [ -r \"$HOME/.rogue-env\" ] && . \"$HOME/.rogue-env\"; [ -n \"$ROGUE_API_KEY\" ] || { echo '{}'; exit 0; }; curl -sS -X POST ${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/claude -H \"x-rogue-api-key: $ROGUE_API_KEY\" -H \"x-rogue-event: SessionEnd\" -H \"x-rogue-actor-email: $ROGUE_ACTOR_EMAIL\" -H \"x-rogue-actor-name: $ROGUE_ACTOR_NAME\" -H 'Content-Type: application/json' --data-binary @- --max-time 10 || echo '{}'",
+            "timeout": 12
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -r /etc/rogue/env ] && . /etc/rogue/env; [ -r \"$HOME/.rogue-env\" ] && . \"$HOME/.rogue-env\"; [ -n \"$ROGUE_API_KEY\" ] || { echo '{}'; exit 0; }; curl -sS -X POST ${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/claude -H \"x-rogue-api-key: $ROGUE_API_KEY\" -H \"x-rogue-event: SubagentStart\" -H \"x-rogue-actor-email: $ROGUE_ACTOR_EMAIL\" -H \"x-rogue-actor-name: $ROGUE_ACTOR_NAME\" -H 'Content-Type: application/json' --data-binary @- --max-time 10 || echo '{}'",
+            "timeout": 12
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -r /etc/rogue/env ] && . /etc/rogue/env; [ -r \"$HOME/.rogue-env\" ] && . \"$HOME/.rogue-env\"; [ -n \"$ROGUE_API_KEY\" ] || { echo '{}'; exit 0; }; curl -sS -X POST ${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/claude -H \"x-rogue-api-key: $ROGUE_API_KEY\" -H \"x-rogue-event: SubagentStop\" -H \"x-rogue-actor-email: $ROGUE_ACTOR_EMAIL\" -H \"x-rogue-actor-name: $ROGUE_ACTOR_NAME\" -H 'Content-Type: application/json' --data-binary @- --max-time 10 || echo '{}'",
+            "timeout": 12
+          }
+        ]
+      }
+    ],
+    "InstructionsLoaded": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -r /etc/rogue/env ] && . /etc/rogue/env; [ -r \"$HOME/.rogue-env\" ] && . \"$HOME/.rogue-env\"; [ -n \"$ROGUE_API_KEY\" ] || { echo '{}'; exit 0; }; curl -sS -X POST ${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/claude -H \"x-rogue-api-key: $ROGUE_API_KEY\" -H \"x-rogue-event: InstructionsLoaded\" -H \"x-rogue-actor-email: $ROGUE_ACTOR_EMAIL\" -H \"x-rogue-actor-name: $ROGUE_ACTOR_NAME\" -H 'Content-Type: application/json' --data-binary @- --max-time 10 || echo '{}'",
+            "timeout": 7
+          }
+        ]
+      }
+    ],
+    "ConfigChange": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -r /etc/rogue/env ] && . /etc/rogue/env; [ -r \"$HOME/.rogue-env\" ] && . \"$HOME/.rogue-env\"; [ -n \"$ROGUE_API_KEY\" ] || { echo '{}'; exit 0; }; curl -sS -X POST ${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/claude -H \"x-rogue-api-key: $ROGUE_API_KEY\" -H \"x-rogue-event: ConfigChange\" -H \"x-rogue-actor-email: $ROGUE_ACTOR_EMAIL\" -H \"x-rogue-actor-name: $ROGUE_ACTOR_NAME\" -H 'Content-Type: application/json' --data-binary @- --max-time 10 || echo '{}'",
+            "timeout": 7
+          }
+        ]
+      }
+    ],
+    "Elicitation": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -r /etc/rogue/env ] && . /etc/rogue/env; [ -r \"$HOME/.rogue-env\" ] && . \"$HOME/.rogue-env\"; [ -n \"$ROGUE_API_KEY\" ] || { echo '{}'; exit 0; }; curl -sS -X POST ${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/claude -H \"x-rogue-api-key: $ROGUE_API_KEY\" -H \"x-rogue-event: Elicitation\" -H \"x-rogue-actor-email: $ROGUE_ACTOR_EMAIL\" -H \"x-rogue-actor-name: $ROGUE_ACTOR_NAME\" -H 'Content-Type: application/json' --data-binary @- --max-time 10 || echo '{}'",
+            "timeout": 7
+          }
+        ]
+      }
+    ],
+    "ElicitationResult": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -r /etc/rogue/env ] && . /etc/rogue/env; [ -r \"$HOME/.rogue-env\" ] && . \"$HOME/.rogue-env\"; [ -n \"$ROGUE_API_KEY\" ] || { echo '{}'; exit 0; }; curl -sS -X POST ${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/claude -H \"x-rogue-api-key: $ROGUE_API_KEY\" -H \"x-rogue-event: ElicitationResult\" -H \"x-rogue-actor-email: $ROGUE_ACTOR_EMAIL\" -H \"x-rogue-actor-name: $ROGUE_ACTOR_NAME\" -H 'Content-Type: application/json' --data-binary @- --max-time 10 || echo '{}'",
+            "timeout": 12
+          }
+        ]
+      }
+    ]
+  }
+}
