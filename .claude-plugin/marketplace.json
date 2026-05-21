@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
   "name": "rogue-marketplace",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Rogue Security extensions for Claude Code",
   "owner": {
     "name": "Qualifire (Rogue Security)",
@@ -11,8 +11,8 @@
   "plugins": [
     {
       "name": "rogue",
-      "version": "1.0.0",
-      "description": "Rogue Security AIDR — real-time AI agent detection and response for Claude Code",
+      "version": "1.0.1",
+      "description": "Rogue Security AIDR \u2014 real-time AI agent detection and response for Claude Code",
       "author": {
         "name": "Rogue Security",
         "url": "https://www.rogue.security"
