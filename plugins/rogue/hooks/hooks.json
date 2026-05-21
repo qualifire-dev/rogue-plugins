@@ -6,6 +6,16 @@
         "hooks": [
           {
             "type": "command",
+            "command": "( nohup bash \"${CLAUDE_PLUGIN_ROOT}/scripts/auto-update.sh\" >/dev/null 2>&1 & )",
+            "timeout": 2
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
             "command": "[ -r /etc/rogue/env ] && . /etc/rogue/env; [ -r \"$HOME/.rogue-env\" ] && . \"$HOME/.rogue-env\"; [ -z \"$ROGUE_API_KEY\" ] && printf '{\"systemMessage\": \"[Rogue Security] Not configured. Run /rogue:setup to connect your API key.\"}' || true",
             "timeout": 2
           }
