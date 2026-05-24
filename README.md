@@ -30,7 +30,7 @@ Get an API key at <https://app.rogue.security/settings/api-keys>.
 
 ```
 .claude-plugin/plugin.json   — plugin manifest
-hooks/hooks.json             — 14 command-based lifecycle hooks
+hooks/hooks.json             — 12 command-based lifecycle hooks
 commands/setup.md            — /rogue:setup slash command
 commands/status.md           — /rogue:status slash command
 scripts/setup.sh             — credential storage helper
@@ -40,8 +40,7 @@ scripts/setup.sh             — credential storage helper
 
 `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
 `PostToolUseFailure`, `PermissionRequest`, `Stop`, `SessionEnd`,
-`SubagentStart`, `SubagentStop`, `InstructionsLoaded`, `ConfigChange`,
-`Elicitation`, `ElicitationResult`.
+`SubagentStart`, `SubagentStop`, `InstructionsLoaded`, `ConfigChange`.
 
 All hooks are `type: "command"`. They source credentials from `/etc/rogue/env`
 (system-wide, for MDM) or `~/.rogue-env` (per-user) at runtime, then POST the
@@ -77,6 +76,20 @@ To revoke: `rm ~/.rogue-env` (per-user) or `sudo rm /etc/rogue/env` (MDM).
 
 Prepend `rgx!` to any prompt to allow it through and mark the previous
 detection as a false positive in the dashboard. Per-prompt only.
+
+## Tool-call enforcement mode
+
+By default, when Rogue flags a tool call (`PreToolUse`), the plugin routes
+the detection through Claude Code's permission prompt instead of hard-
+blocking — you see the reason and decide. Override in `~/.rogue-env`:
+
+```
+export ROGUE_PRETOOLUSE_ON_BLOCK=ask    # default — surface as a permission prompt
+export ROGUE_PRETOOLUSE_ON_BLOCK=block  # legacy hard-block, no user prompt
+```
+
+Only `PreToolUse` is affected — `UserPromptSubmit` blocks remain hard
+blocks (no permission UI applies to prompt submission).
 
 ## Dashboard
 
