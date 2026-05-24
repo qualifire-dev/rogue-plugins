@@ -15,7 +15,6 @@ There is no build step for the plugin itself: it's a directory of JSON + shell s
 - `plugins/rogue/hooks/hooks.json` — 12 lifecycle hooks, all `type: "command"`, all running inline bash. **Every hook follows the same shape** (see below).
 - `plugins/rogue/scripts/setup.sh` — writes `~/.rogue-env` (mode 600) with `ROGUE_API_KEY` / `ROGUE_ACTOR_EMAIL` / `ROGUE_ACTOR_NAME`. Called by `/rogue:setup`.
 - `plugins/rogue/scripts/auto-update.sh` — fires from `SessionStart` in the background. Rate-limited to once/24h via `~/.rogue/.auto-update-check`. Logs to `~/.rogue/auto-update.log`. Re-invokes the one-line installer when a newer release tag exists.
-- `plugins/rogue/scripts/pretooluse.sh` — handler for the `PreToolUse` hook. POSTs the event, then optionally translates a `decision: "block"` response into Claude Code's `hookSpecificOutput.permissionDecision: "ask"` permission flow. Gated by `ROGUE_PRETOOLUSE_ON_BLOCK` (`ask` default, `block` for legacy hard-block).
 - `plugins/rogue/scripts/security-alert.sh` — cross-platform modal alert (osascript on macOS, notify-send on Linux). Used by `UserPromptSubmit` when the API returns `decision: "block"`.
 - `plugins/rogue/commands/{setup,status}.md` — slash commands. These are **instructions to Claude**, not scripts — Claude executes the bash inside them step-by-step.
 - `scripts/build-release.sh` + `.github/workflows/release.yml` — tag-driven release pipeline. Pushing a `v*` tag builds `dist/rogue-plugin-claude-darwin.tar.gz` and attaches it to the release. The artifact filename intentionally has **no version** so `/latest/` URLs stay stable.
@@ -39,7 +38,7 @@ Invariants to preserve when editing hooks:
 - **Source both env files in this order** (`/etc/rogue/env` first for MDM, then `~/.rogue-env`). Never read `~/.rogue-env` only.
 - **Fail-open on missing key and on curl failure** — every command path must end up emitting `{}` so Claude Code is never blocked by Rogue infra. The `|| echo '{}'` at the end of the curl is load-bearing.
 - **`x-rogue-event` must match the hook's key** in `hooks.json` (e.g. the `PreToolUse` hook sends `x-rogue-event: PreToolUse`). The server routes on this header.
-- `UserPromptSubmit` parses the response itself (`decision == "block"` → fires `security-alert.sh` via osascript/notify-send) and `PreToolUse` delegates to `scripts/pretooluse.sh` (which may rewrite block → ask). Every other hook relays the API response verbatim.
+- `UserPromptSubmit` parses the response itself (`decision == "block"` → fires `security-alert.sh` via osascript/notify-send). Every other hook relays the API response verbatim.
 - Timeouts: curl uses `--max-time 10`; hook `timeout` is set 2s higher to give curl room to fail cleanly.
 
 ## Releasing

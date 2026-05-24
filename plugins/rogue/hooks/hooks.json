@@ -46,11 +46,11 @@
     ],
     "PreToolUse": [
       {
-        "matcher": ".*",
+        "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/pretooluse.sh\"",
+            "command": "[ -r \"${CLAUDE_PLUGIN_ROOT}/env\" ] && . \"${CLAUDE_PLUGIN_ROOT}/env\"; [ -r /etc/rogue/env ] && . /etc/rogue/env; [ -r \"$HOME/.rogue-env\" ] && . \"$HOME/.rogue-env\"; [ -n \"$ROGUE_API_KEY\" ] || { echo '{}'; exit 0; }; curl -sS -X POST ${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/claude -H \"x-rogue-api-key: $ROGUE_API_KEY\" -H \"x-rogue-event: PreToolUse\" -H \"x-rogue-actor-email: $ROGUE_ACTOR_EMAIL\" -H \"x-rogue-actor-name: $ROGUE_ACTOR_NAME\" -H 'Content-Type: application/json' --data-binary @- --max-time 10 || echo '{}'",
             "timeout": 12
           }
         ]

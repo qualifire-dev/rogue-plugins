@@ -77,20 +77,6 @@ To revoke: `rm ~/.rogue-env` (per-user) or `sudo rm /etc/rogue/env` (MDM).
 Prepend `rgx!` to any prompt to allow it through and mark the previous
 detection as a false positive in the dashboard. Per-prompt only.
 
-## Tool-call enforcement mode
-
-By default, when Rogue flags a tool call (`PreToolUse`), the plugin routes
-the detection through Claude Code's permission prompt instead of hard-
-blocking — you see the reason and decide. Override in `~/.rogue-env`:
-
-```
-export ROGUE_PRETOOLUSE_ON_BLOCK=ask    # default — surface as a permission prompt
-export ROGUE_PRETOOLUSE_ON_BLOCK=block  # legacy hard-block, no user prompt
-```
-
-Only `PreToolUse` is affected — `UserPromptSubmit` blocks remain hard
-blocks (no permission UI applies to prompt submission).
-
 ## Dashboard
 
 <https://app.rogue.security/aidr>
