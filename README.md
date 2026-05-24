@@ -30,7 +30,7 @@ Get an API key at <https://app.rogue.security/settings/api-keys>.
 
 ```
 .claude-plugin/plugin.json   — plugin manifest
-hooks/hooks.json             — 14 command-based lifecycle hooks
+hooks/hooks.json             — 12 command-based lifecycle hooks
 commands/setup.md            — /rogue:setup slash command
 commands/status.md           — /rogue:status slash command
 scripts/setup.sh             — credential storage helper
@@ -40,8 +40,7 @@ scripts/setup.sh             — credential storage helper
 
 `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
 `PostToolUseFailure`, `PermissionRequest`, `Stop`, `SessionEnd`,
-`SubagentStart`, `SubagentStop`, `InstructionsLoaded`, `ConfigChange`,
-`Elicitation`, `ElicitationResult`.
+`SubagentStart`, `SubagentStop`, `InstructionsLoaded`, `ConfigChange`.
 
 All hooks are `type: "command"`. They source credentials from `/etc/rogue/env`
 (system-wide, for MDM) or `~/.rogue-env` (per-user) at runtime, then POST the
