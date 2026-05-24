@@ -108,6 +108,55 @@ STAGE="$WORK/rogue"
 mkdir -p "$STAGE"
 cp -R "$SRC"/. "$STAGE"/
 
+# Cowork's plugin-manifest validator has a narrower hook allow-list than the
+# Claude Code runtime. Strip events outside that allow-list — purely for the
+# Cowork-bound bundle; the source hooks.json (used by the marketplace install
+# path) keeps the full set.
+python3 - "$STAGE" <<'PY'
+import json, os, sys
+stage = sys.argv[1]
+COWORK_ALLOW = {
+    "PreToolUse", "PostToolUse", "Stop", "SubagentStop",
+    "SessionStart", "SessionEnd", "UserPromptSubmit",
+    "PreCompact", "Notification",
+}
+hp = os.path.join(stage, "hooks", "hooks.json")
+with open(hp) as f:
+    data = json.load(f)
+hooks = data.get("hooks", {})
+kept = {k: v for k, v in hooks.items() if k in COWORK_ALLOW}
+dropped = sorted(set(hooks) - set(kept))
+data["hooks"] = kept
+with open(hp, "w") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+if dropped:
+    print("-> stripped unsupported hook events: " + ", ".join(dropped), file=sys.stderr)
+PY
+
+# Cowork's drag-drop UI expects a marketplace zip, not a bare plugin. Generate
+# a "single-plugin at root" marketplace.json next to plugin.json — same pattern
+# as e.g. jarrodwatts-claude-stt: source "./" means the marketplace root *is*
+# the plugin root.
+python3 - "$STAGE" <<'PY'
+import json, os, sys
+stage = sys.argv[1]
+pjp = os.path.join(stage, ".claude-plugin", "plugin.json")
+mjp = os.path.join(stage, ".claude-plugin", "marketplace.json")
+with open(pjp) as f:
+    p = json.load(f)
+plugin_entry = {k: v for k, v in p.items()}
+plugin_entry["source"] = "./"
+market = {
+    "name": f"{p['name']}-marketplace",
+    "owner": p.get("author", {"name": p.get("name", "unknown")}),
+    "plugins": [plugin_entry],
+}
+with open(mjp, "w") as f:
+    json.dump(market, f, indent=2)
+    f.write("\n")
+PY
+
 # Older releases predate the ${CLAUDE_PLUGIN_ROOT}/env source line. Patch the
 # bundled hooks idempotently so this script works against any release tag.
 python3 - "$STAGE" <<'PY'
@@ -177,7 +226,8 @@ VERSION_NO_V="${FROM#v}"
 [ -n "$OUT" ] || OUT="$PWD/rogue-aidr-compiled-${VERSION_NO_V}.zip"
 rm -f "$OUT"
 
-# Build flat zip: $STAGE contents go at zip root.
+# Flat zip: plugin contents at the zip root, no wrapping directory. This is
+# what the Claude Code plugin UI's drag-drop validator expects.
 if command -v zip >/dev/null 2>&1; then
   ( cd "$STAGE" && zip -qr "$OUT" . )
 else
@@ -209,12 +259,10 @@ OK  wrote $OUT  (${SIZE} bytes)
     channels only. To rotate: revoke the key in the dashboard and rebuild.
 
 Customer install (drag-and-drop):
-  1. Extract the zip. You will get the plugin root (.claude-plugin/, hooks/,
-     scripts/, commands/, env).
-  2. Move/extract the contents into ~/.claude/plugins/rogue/ (create the
-     directory). Final layout: ~/.claude/plugins/rogue/.claude-plugin/plugin.json
-  3. Enable it: open Claude Code, run /plugin, enable "rogue" — or add
-     manually to ~/.claude/settings.json under enabledPlugins.
-  4. Restart Claude Code. Run /rogue:status to verify the bundled key works.
+  1. In Claude Code's plugins UI, drag and drop this zip.
+  2. Restart Claude Code. Run /rogue:status to verify the bundled key works.
+
+  Zip layout is flat — .claude-plugin/, hooks/, scripts/, commands/, and the
+  compiled env sit at the zip root, no wrapper directory.
 
 EOF
