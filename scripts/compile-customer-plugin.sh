@@ -210,13 +210,14 @@ PY
   echo 'export ROGUE_AUTO_UPDATE=0'
   cat <<'ACTOR'
 
-# Runtime actor identity. Resolved on the end-user's machine, not at compile
-# time. The := only assigns when the var is empty, so anything already set
-# (by /etc/rogue/env earlier, or ~/.rogue-env later) takes precedence.
+# Best-effort actor identity from git config — useful on developer machines.
+# NO synthetic hostname/$USER fallback: on managed VMs (Cowork, ephemeral
+# build agents) the hostname is random and produces useless actor data.
+# When git config is empty, leave the vars unset and let /etc/rogue/env
+# (MDM-provisioned via scripts/mdm-provision-actor.sh) or ~/.rogue-env
+# populate them at hook-fire time.
 : "${ROGUE_ACTOR_EMAIL:=$(git config --global user.email 2>/dev/null)}"
 : "${ROGUE_ACTOR_NAME:=$(git config --global user.name 2>/dev/null)}"
-[ -n "$ROGUE_ACTOR_EMAIL" ] || ROGUE_ACTOR_EMAIL="${USER:-unknown}@$(hostname -s 2>/dev/null || echo localhost)"
-[ -n "$ROGUE_ACTOR_NAME" ]  || ROGUE_ACTOR_NAME="${USER:-unknown}"
 export ROGUE_ACTOR_EMAIL ROGUE_ACTOR_NAME
 ACTOR
 } > "$STAGE/env"
