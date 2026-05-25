@@ -43,8 +43,8 @@ for OS in $OS_MATRIX; do
 
   # Future OS-specific filtering hook (no-op today).
   # case "$OS" in
-  #   darwin) ... ;;
-  #   windows) ... ;;
+  #   darwin) rm -f "$TOPDIR/plugins/rogue/scripts/security-alert.ps1" ;;
+  #   windows) rm -f "$TOPDIR/plugins/rogue/scripts/security-alert.sh" ;;
   # esac
 
   OUT="$DIST/rogue-plugin-claude-${OS}.tar.gz"
