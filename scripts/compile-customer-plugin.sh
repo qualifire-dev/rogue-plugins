@@ -211,11 +211,11 @@ PY
   cat <<'ACTOR'
 
 # Best-effort actor identity from git config — useful on developer machines.
-# NO synthetic hostname/$USER fallback: on managed VMs (Cowork, ephemeral
-# build agents) the hostname is random and produces useless actor data.
-# When git config is empty, leave the vars unset and let /etc/rogue/env
-# (MDM-provisioned via scripts/mdm-provision-actor.sh) or ~/.rogue-env
-# populate them at hook-fire time.
+# If still empty at hook-fire time, the hooks themselves fall back to
+# hostname/whoami (see hooks.json). The earlier "no hostname fallback" rule
+# assumed hooks ran inside the Cowork/build-VM guest where hostname is
+# random — empirically they run on the host, so hostname is a stable
+# per-machine identifier and safe to use as a last resort.
 : "${ROGUE_ACTOR_EMAIL:=$(git config --global user.email 2>/dev/null)}"
 : "${ROGUE_ACTOR_NAME:=$(git config --global user.name 2>/dev/null)}"
 export ROGUE_ACTOR_EMAIL ROGUE_ACTOR_NAME
