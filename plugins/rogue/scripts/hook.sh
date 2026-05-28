@@ -32,63 +32,41 @@ RESP=$(curl -sS -X POST "${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/ho
   -H 'Content-Type: application/json' \
   --data-binary @- --max-time 10 || echo '{}')
 
-# Always log the raw response (truncated, control chars stripped) so block-
-# detection bugs are diagnosable from ~/.rogue/hook.log without re-instrumenting.
+# Always log raw response so block-detection bugs are diagnosable from
+# ~/.rogue/hook.log alone, without re-instrumenting the script.
 log "raw=$(sanitize "$RESP" | head -c 400)"
 
-# Cover every block-decision shape Claude Code's hook protocol uses:
-#   {"decision":"block"|"Block",...}              UserPromptSubmit, Stop, etc.
-#   {"continue":false,...}                        legacy block signal
-#   {"permissionDecision":"deny"} (top-level)     belt-and-suspenders
-#   {"hookSpecificOutput":{"permissionDecision":"deny",...}}        PreToolUse
-#   {"hookSpecificOutput":{"decision":"block"|{"behavior":"deny"}}} PostToolUse / PermissionRequest
-PYOUT=$(printf '%s' "$RESP" | python3 -c '
-import sys, json
-try:
-    d = json.loads(sys.stdin.read() or "{}")
-except Exception:
-    print(0); print(""); sys.exit(0)
+# Pure-shell block detection. We deliberately do NOT use python3 — on a fresh
+# macOS the stub at /usr/bin/python3 fails silently without Xcode CLT,
+# producing empty parser output that masquerades as "allow". grep + sed are
+# always present.
+#
+# Covers every block-decision shape Claude Code's hook protocol emits:
+#   "decision":"block"           UserPromptSubmit, Stop (top-level)
+#   "continue":false             legacy block signal
+#   "permissionDecision":"deny"  PreToolUse (inside hookSpecificOutput)
+#   "decision":"block"           PostToolUse (inside hookSpecificOutput)
+#   "behavior":"deny"            PermissionRequest (inside hookSpecificOutput.decision)
+BLOCK=0
+if printf '%s' "$RESP" | grep -qiE '"decision"[[:space:]]*:[[:space:]]*"block"|"continue"[[:space:]]*:[[:space:]]*false|"permissionDecision"[[:space:]]*:[[:space:]]*"deny"|"behavior"[[:space:]]*:[[:space:]]*"deny"'; then
+  BLOCK=1
+fi
 
-def is_block(o):
-    if not isinstance(o, dict): return False
-    dec = o.get("decision")
-    if isinstance(dec, str) and dec.lower() == "block": return True
-    if isinstance(dec, dict) and str(dec.get("behavior","")).lower() == "deny": return True
-    if o.get("continue") is False: return True
-    pd = o.get("permissionDecision")
-    if isinstance(pd, str) and pd.lower() == "deny": return True
-    hso = o.get("hookSpecificOutput")
-    if isinstance(hso, dict) and is_block(hso): return True
-    return False
+if [ "$BLOCK" = "1" ]; then
+  # Extract reason. First-match heuristic across the field names the formatter
+  # uses (permissionDecisionReason for PreToolUse, reason for everything else,
+  # stopReason for continue:false). Limitation: doesn't handle JSON-escaped
+  # quotes inside reason text — Rogue's reasons don't contain them.
+  REASON=$(printf '%s' "$RESP" | sed -E -n 's/.*"permissionDecisionReason"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' | head -1)
+  [ -z "$REASON" ] && REASON=$(printf '%s' "$RESP" | sed -E -n 's/.*"reason"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' | head -1)
+  [ -z "$REASON" ] && REASON=$(printf '%s' "$RESP" | sed -E -n 's/.*"stopReason"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' | head -1)
+  [ -z "$REASON" ] && REASON=$(printf '%s' "$RESP" | sed -E -n 's/.*"message"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' | head -1)
+  [ -z "$REASON" ] && REASON="prompt blocked"
 
-def get_reason(o):
-    if not isinstance(o, dict): return ""
-    for k in ("reason","stopReason","permissionDecisionReason"):
-        v = o.get(k)
-        if isinstance(v, str) and v: return v
-    dec = o.get("decision")
-    if isinstance(dec, dict):
-        for k in ("message","reason"):
-            v = dec.get(k)
-            if isinstance(v, str) and v: return v
-    hso = o.get("hookSpecificOutput")
-    if isinstance(hso, dict): return get_reason(hso)
-    return ""
-
-if is_block(d):
-    r = (get_reason(d) or "prompt blocked").replace("\n"," ").replace("\r"," ")
-    print(1); print(r)
-else:
-    print(0); print("")
-' 2>/dev/null)
-BLOCK=$(printf '%s' "$PYOUT" | sed -n '1p')
-REASON=$(printf '%s' "$PYOUT" | sed -n '2p')
-
-if [ "${BLOCK:-0}" = "1" ]; then
   log "outcome=block reason=\"$(sanitize "$REASON")\""
   if [ "${CLAUDE_CODE_ENTRYPOINT:-}" != "cli" ]; then
     # Background the alert so hook.sh returns immediately. Capture exit code
-    # afterward so TCC denials / osascript errors are visible in the log.
+    # afterward so TCC denials / osascript failures become visible in the log.
     ( bash "${CLAUDE_PLUGIN_ROOT}/scripts/security-alert.sh" "Rogue Security" "$REASON" critical >/dev/null 2>&1; log "alert_rc=$? entrypoint=${CLAUDE_CODE_ENTRYPOINT:-unset}" ) &
   else
     log "alert_skipped=cli"
