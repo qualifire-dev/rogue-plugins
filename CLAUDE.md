@@ -35,7 +35,8 @@ curl -sS -X POST ${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/clau
 
 Invariants to preserve when editing hooks:
 
-- **Source both env files in this order** (`/etc/rogue/env` first for MDM, then `~/.rogue-env`). Never read `~/.rogue-env` only.
+- **Source env files in this precedence order** — `/tmp/.rogue-env` (session-cached resolved actor — written by every API POST hook after resolving), then `${CLAUDE_PLUGIN_ROOT}/env` (bundled defaults for compiled-with-key distributions), then `/etc/rogue/env` (MDM), then `$HOME/.rogue-env` (per-user, written by `/rogue:setup`). Later-sourced files override earlier ones, so `/tmp` must be first (lowest priority — it's a fallback) and `~/.rogue-env` last (highest priority — explicit user intent). Never drop any of the four.
+- **Every API POST hook resolves+caches actor** — after sourcing, each hook fills `ROGUE_ACTOR_EMAIL` / `ROGUE_ACTOR_NAME` from (in order) sourced env, `git config --global`, `hostname`/`whoami`, and then writes the resolved pair to `/tmp/.rogue-env` (mode 600, single-quoted, apostrophes stripped). This is what makes the compiled-with-key distribution (which ships only `${CLAUDE_PLUGIN_ROOT}/env` with the API key, no actor) attribute events without a setup step. The first hook to fire bootstraps the cache; subsequent hooks in the session source it for free.
 - **Fail-open on missing key and on curl failure** — every command path must end up emitting `{}` so Claude Code is never blocked by Rogue infra. The `|| echo '{}'` at the end of the curl is load-bearing.
 - **`x-rogue-event` must match the hook's key** in `hooks.json` (e.g. the `PreToolUse` hook sends `x-rogue-event: PreToolUse`). The server routes on this header.
 - `UserPromptSubmit` parses the response itself (`decision == "block"` → fires `security-alert.sh` via osascript/notify-send). Every other hook relays the API response verbatim.
