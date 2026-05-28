@@ -21,23 +21,23 @@ There is no build step for the plugin itself: it's a directory of JSON + shell s
 
 ## The hook pattern
 
-Every hook command in `hooks.json` is a one-liner with this exact shape:
+Every API-POST entry in `hooks.json` is a thin wrapper around `scripts/hook.sh`:
 
-```sh
-[ -r /etc/rogue/env ] && . /etc/rogue/env;
-[ -r "$HOME/.rogue-env" ] && . "$HOME/.rogue-env";
-[ -n "$ROGUE_API_KEY" ] || { echo '{}'; exit 0; };   # fail-open if unconfigured
-curl -sS -X POST ${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/claude \
-  -H "x-rogue-api-key: $ROGUE_API_KEY" \
-  -H "x-rogue-event: <EventName>" \
-  ... --data-binary @- --max-time 10 || echo '{}'
+```json
+{ "type": "command",
+  "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" PreToolUse || echo '{}'",
+  "timeout": 12 }
 ```
+
+`scripts/hook.sh <EventName>` is the orchestrator: sources env files, fail-opens on missing API key, sources `scripts/actor.sh` for actor resolution, POSTs stdin to `/api/v1/hooks/claude` with the four `x-rogue-*` headers, parses the response for a block decision, fires `scripts/security-alert.sh` in the background on block (skipped when `CLAUDE_CODE_ENTRYPOINT=cli`), and prints the API response to stdout. Logs every invocation to `$ROGUE_LOG_FILE` (default `~/.rogue/hook.log`); the logged `reason` is sanitized of control characters to prevent log forgery from server-controlled text.
+
+`scripts/warn.sh` is the SessionStart "not configured" nudge. `scripts/auto-update.sh` is the SessionStart background updater.
 
 Invariants to preserve when editing hooks:
 
-- **Source env files in this precedence order** — `/tmp/.rogue-env` (session-cached resolved actor — written by every API POST hook after resolving), then `${CLAUDE_PLUGIN_ROOT}/env` (bundled defaults for compiled-with-key distributions), then `/etc/rogue/env` (MDM), then `$HOME/.rogue-env` (per-user, written by `/rogue:setup`). Later-sourced files override earlier ones, so `/tmp` must be first (lowest priority — it's a fallback) and `~/.rogue-env` last (highest priority — explicit user intent). Never drop any of the four.
-- **Every API POST hook resolves+caches actor** — after sourcing, each hook fills `ROGUE_ACTOR_EMAIL` / `ROGUE_ACTOR_NAME` from (in order) sourced env, `git config --global`, `hostname`/`whoami`, and then writes the resolved pair to `/tmp/.rogue-env` (mode 600, single-quoted, apostrophes stripped). This is what makes the compiled-with-key distribution (which ships only `${CLAUDE_PLUGIN_ROOT}/env` with the API key, no actor) attribute events without a setup step. The first hook to fire bootstraps the cache; subsequent hooks in the session source it for free.
-- **Fail-open on missing key and on curl failure** — every command path must end up emitting `{}` so Claude Code is never blocked by Rogue infra. The `|| echo '{}'` at the end of the curl is load-bearing.
+- **Source env files in this precedence order** — `${CLAUDE_PLUGIN_ROOT}/env` (bundled defaults for compiled-with-key distributions), then `/etc/rogue/env` (MDM), then `$HOME/.rogue-env` (per-user, written by `/rogue:setup`). Later-sourced files override earlier ones, so `~/.rogue-env` wins (explicit user intent). Never source from any world-writable path like `/tmp` — that turns the hook into a local code-execution primitive.
+- **Actor cascade lives in `scripts/actor.sh`** — sourced by `hook.sh` after the env files. Per-var fallback order: existing env → `git config --global user.{email,name}` → `CLAUDE_CODE_USER_EMAIL` (Claude Code injects this in Cowork and similar remote-VM environments; local-part as name) → `hostname` / `whoami` last-resort. Resolved every hook; no on-disk cache (stale-cache bugs would silently defeat the Cowork identity fix).
+- **Fail-open is layered** — `hook.sh` emits `{}` on missing API key or any curl failure, AND every `hooks.json` command is wrapped `bash ... || echo '{}'` so a missing/broken script or absent `bash` still emits `{}` instead of unblocked stdout. Both layers are load-bearing.
 - **`x-rogue-event` must match the hook's key** in `hooks.json` (e.g. the `PreToolUse` hook sends `x-rogue-event: PreToolUse`). The server routes on this header.
 - `UserPromptSubmit` parses the response itself (`decision == "block"` → fires `security-alert.sh` via osascript/notify-send). Every other hook relays the API response verbatim.
 - Timeouts: curl uses `--max-time 10`; hook `timeout` is set 2s higher to give curl room to fail cleanly.

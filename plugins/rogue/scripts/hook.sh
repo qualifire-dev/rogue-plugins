@@ -5,7 +5,6 @@
 
 EVENT="$1"
 
-[ -r /tmp/.rogue-env ]              && . /tmp/.rogue-env
 [ -r "${CLAUDE_PLUGIN_ROOT}/env" ]  && . "${CLAUDE_PLUGIN_ROOT}/env"
 [ -r /etc/rogue/env ]               && . /etc/rogue/env
 [ -r "$HOME/.rogue-env" ]           && . "$HOME/.rogue-env"
@@ -44,7 +43,8 @@ import sys, json
 d = json.loads(sys.stdin.read() or "{}")
 print(d.get("reason") or d.get("stopReason") or "prompt blocked")
 ' 2>/dev/null)
-  log "outcome=block reason=\"$REASON\""
+  SAFE_REASON=$(printf '%s' "$REASON" | tr -d '\000-\037\177')
+  log "outcome=block reason=\"$SAFE_REASON\""
   if [ "${CLAUDE_CODE_ENTRYPOINT:-}" != "cli" ]; then
     ( bash "${CLAUDE_PLUGIN_ROOT}/scripts/security-alert.sh" "Rogue Security" "$REASON" critical >/dev/null 2>&1 & )
   fi
