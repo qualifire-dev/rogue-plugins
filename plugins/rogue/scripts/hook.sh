@@ -14,6 +14,7 @@ log() {
   mkdir -p "$(dirname "$ROGUE_LOG_FILE")" 2>/dev/null
   printf '%s event=%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$EVENT" "$*" >> "$ROGUE_LOG_FILE" 2>/dev/null
 }
+sanitize() { printf '%s' "$1" | tr -d '\000-\037\177'; }
 
 if [ -z "${ROGUE_API_KEY:-}" ]; then
   log "outcome=unconfigured"
@@ -31,22 +32,44 @@ RESP=$(curl -sS -X POST "${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/ho
   -H 'Content-Type: application/json' \
   --data-binary @- --max-time 10 || echo '{}')
 
-BLOCK=$(printf '%s' "$RESP" | python3 -c '
-import sys, json
-d = json.loads(sys.stdin.read() or "{}")
-print(1 if d.get("decision") == "block" or d.get("continue") is False else 0)
-' 2>/dev/null || echo 0)
+# Always log raw response so block-detection bugs are diagnosable from
+# ~/.rogue/hook.log alone, without re-instrumenting the script.
+log "raw=$(sanitize "$RESP" | head -c 400)"
+
+# Pure-shell block detection. We deliberately do NOT use python3 — on a fresh
+# macOS the stub at /usr/bin/python3 fails silently without Xcode CLT,
+# producing empty parser output that masquerades as "allow". grep + sed are
+# always present.
+#
+# Covers every block-decision shape Claude Code's hook protocol emits:
+#   "decision":"block"           UserPromptSubmit, Stop (top-level)
+#   "continue":false             legacy block signal
+#   "permissionDecision":"deny"  PreToolUse (inside hookSpecificOutput)
+#   "decision":"block"           PostToolUse (inside hookSpecificOutput)
+#   "behavior":"deny"            PermissionRequest (inside hookSpecificOutput.decision)
+BLOCK=0
+if printf '%s' "$RESP" | grep -qiE '"decision"[[:space:]]*:[[:space:]]*"block"|"continue"[[:space:]]*:[[:space:]]*false|"permissionDecision"[[:space:]]*:[[:space:]]*"deny"|"behavior"[[:space:]]*:[[:space:]]*"deny"'; then
+  BLOCK=1
+fi
 
 if [ "$BLOCK" = "1" ]; then
-  REASON=$(printf '%s' "$RESP" | python3 -c '
-import sys, json
-d = json.loads(sys.stdin.read() or "{}")
-print(d.get("reason") or d.get("stopReason") or "prompt blocked")
-' 2>/dev/null)
-  SAFE_REASON=$(printf '%s' "$REASON" | tr -d '\000-\037\177')
-  log "outcome=block reason=\"$SAFE_REASON\""
+  # Extract reason. First-match heuristic across the field names the formatter
+  # uses (permissionDecisionReason for PreToolUse, reason for everything else,
+  # stopReason for continue:false). Limitation: doesn't handle JSON-escaped
+  # quotes inside reason text — Rogue's reasons don't contain them.
+  REASON=$(printf '%s' "$RESP" | sed -E -n 's/.*"permissionDecisionReason"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' | head -1)
+  [ -z "$REASON" ] && REASON=$(printf '%s' "$RESP" | sed -E -n 's/.*"reason"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' | head -1)
+  [ -z "$REASON" ] && REASON=$(printf '%s' "$RESP" | sed -E -n 's/.*"stopReason"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' | head -1)
+  [ -z "$REASON" ] && REASON=$(printf '%s' "$RESP" | sed -E -n 's/.*"message"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' | head -1)
+  [ -z "$REASON" ] && REASON="prompt blocked"
+
+  log "outcome=block reason=\"$(sanitize "$REASON")\""
   if [ "${CLAUDE_CODE_ENTRYPOINT:-}" != "cli" ]; then
-    ( bash "${CLAUDE_PLUGIN_ROOT}/scripts/security-alert.sh" "Rogue Security" "$REASON" critical >/dev/null 2>&1 & )
+    # Background the alert so hook.sh returns immediately. Capture exit code
+    # afterward so TCC denials / osascript failures become visible in the log.
+    ( bash "${CLAUDE_PLUGIN_ROOT}/scripts/security-alert.sh" "Rogue Security" "$REASON" critical >/dev/null 2>&1; log "alert_rc=$? entrypoint=${CLAUDE_CODE_ENTRYPOINT:-unset}" ) &
+  else
+    log "alert_skipped=cli"
   fi
 else
   log "outcome=allow"
