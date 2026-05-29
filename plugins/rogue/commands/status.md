@@ -57,14 +57,15 @@ plugin version exists. The plugin version is read from the manifest without
 PJ=$(find "$HOME/.claude/plugins" -path '*rogue*/.claude-plugin/plugin.json' 2>/dev/null | head -1)
 VER=$(grep -oE '"version"[[:space:]]*:[[:space:]]*"[0-9][^"]*"' "$PJ" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
 case "$(printf '%s' "${CLAUDE_CODE_ENTRYPOINT:-}" | tr '[:upper:]' '[:lower:]')" in
-  *cowork*)  FAMILY="claude_cowork" ;;
-  *desktop*) FAMILY="claude_code_desktop" ;;
-  *)         FAMILY="claude_code_cli" ;;
+  *cowork*)  AGENT="cowork" ;;
+  *desktop*) AGENT="desktop" ;;
+  *)         AGENT="cli" ;;
 esac
 curl -s -w "\n%{http_code}" \
   "${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/status" \
   -H "x-rogue-api-key: $ROGUE_API_KEY" \
-  -H "x-rogue-agent-family: $FAMILY" \
+  -H "x-rogue-agent-family: claude" \
+  -H "x-rogue-agent: $AGENT" \
   -H "x-rogue-agent-version: ${VER:-unknown}" \
   -H "x-rogue-host: $(hostname)" \
   -H "x-rogue-actor-email: ${ROGUE_ACTOR_EMAIL:-}" \

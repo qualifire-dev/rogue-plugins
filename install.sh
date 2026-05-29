@@ -128,7 +128,8 @@ status_check() { # status_check <api-key> <actor-email>
   resp=$(curl -s -w $'\n%{http_code}' --max-time 10 \
     "$ROGUE_BASE_URL/api/v1/hooks/status" \
     -H "x-rogue-api-key: $1" \
-    -H "x-rogue-agent-family: claude_code_cli" \
+    -H "x-rogue-agent-family: claude" \
+    -H "x-rogue-agent: cli" \
     -H "x-rogue-host: $(hostname 2>/dev/null || echo unknown)" \
     -H "x-rogue-actor-email: ${2:-}" 2>/dev/null) || { printf ''; return; }
   code="${resp##*$'\n'}"

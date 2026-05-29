@@ -35,19 +35,20 @@ if [ -r "$PJ" ]; then
   [ -n "$v" ] && VER="$v"
 fi
 
-# Map the Claude Code surface to its roster family from CLAUDE_CODE_ENTRYPOINT
-# (the same var hook.sh uses to tell GUI from cli). Unknown surfaces fall back to
-# claude_code_cli.
+# Family is the fixed enum value "claude". The surface (cli / desktop / cowork)
+# rides the separate x-rogue-agent header, derived from CLAUDE_CODE_ENTRYPOINT
+# (the same var hook.sh uses to tell GUI from cli). Unknown → cli.
 case "$(printf '%s' "${CLAUDE_CODE_ENTRYPOINT:-}" | tr '[:upper:]' '[:lower:]')" in
-  *cowork*)  FAMILY="claude_cowork" ;;
-  *desktop*) FAMILY="claude_code_desktop" ;;
-  *)         FAMILY="claude_code_cli" ;;
+  *cowork*)  AGENT="cowork" ;;
+  *desktop*) AGENT="desktop" ;;
+  *)         AGENT="cli" ;;
 esac
 
 curl -sS --max-time 10 \
   "${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/status" \
   -H "x-rogue-api-key: $ROGUE_API_KEY" \
-  -H "x-rogue-agent-family: $FAMILY" \
+  -H "x-rogue-agent-family: claude" \
+  -H "x-rogue-agent: $AGENT" \
   -H "x-rogue-agent-version: $VER" \
   -H "x-rogue-host: $(hostname 2>/dev/null || echo unknown)" \
   -H "x-rogue-actor-email: ${ROGUE_ACTOR_EMAIL:-}" \
