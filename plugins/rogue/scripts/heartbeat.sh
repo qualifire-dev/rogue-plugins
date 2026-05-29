@@ -35,13 +35,14 @@ if [ -r "$PJ" ]; then
   [ -n "$v" ] && VER="$v"
 fi
 
-# Family is the fixed enum value "claude". The surface (cli / desktop / cowork)
-# rides the separate x-rogue-agent header, derived from CLAUDE_CODE_ENTRYPOINT
-# (the same var hook.sh uses to tell GUI from cli). Unknown → cli.
+# Family is the fixed enum value "claude". The surface rides the separate
+# x-rogue-agent header (free-form display label), derived from
+# CLAUDE_CODE_ENTRYPOINT (the same var hook.sh uses to tell GUI from cli).
+# Unknown → CLI.
 case "$(printf '%s' "${CLAUDE_CODE_ENTRYPOINT:-}" | tr '[:upper:]' '[:lower:]')" in
-  *cowork*)  AGENT="cowork" ;;
-  *desktop*) AGENT="desktop" ;;
-  *)         AGENT="cli" ;;
+  *cowork*)  AGENT="Claude Cowork" ;;
+  *desktop*) AGENT="Claude Code - Desktop" ;;
+  *)         AGENT="Claude Code - CLI" ;;
 esac
 
 curl -sS --max-time 10 \

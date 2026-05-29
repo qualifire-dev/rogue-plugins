@@ -57,9 +57,9 @@ plugin version exists. The plugin version is read from the manifest without
 PJ=$(find "$HOME/.claude/plugins" -path '*rogue*/.claude-plugin/plugin.json' 2>/dev/null | head -1)
 VER=$(grep -oE '"version"[[:space:]]*:[[:space:]]*"[0-9][^"]*"' "$PJ" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
 case "$(printf '%s' "${CLAUDE_CODE_ENTRYPOINT:-}" | tr '[:upper:]' '[:lower:]')" in
-  *cowork*)  AGENT="cowork" ;;
-  *desktop*) AGENT="desktop" ;;
-  *)         AGENT="cli" ;;
+  *cowork*)  AGENT="Claude Cowork" ;;
+  *desktop*) AGENT="Claude Code - Desktop" ;;
+  *)         AGENT="Claude Code - CLI" ;;
 esac
 curl -s -w "\n%{http_code}" \
   "${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/status" \

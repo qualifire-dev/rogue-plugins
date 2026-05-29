@@ -129,7 +129,7 @@ status_check() { # status_check <api-key> <actor-email>
     "$ROGUE_BASE_URL/api/v1/hooks/status" \
     -H "x-rogue-api-key: $1" \
     -H "x-rogue-agent-family: claude" \
-    -H "x-rogue-agent: cli" \
+    -H "x-rogue-agent: Claude Code - CLI" \
     -H "x-rogue-host: $(hostname 2>/dev/null || echo unknown)" \
     -H "x-rogue-actor-email: ${2:-}" 2>/dev/null) || { printf ''; return; }
   code="${resp##*$'\n'}"
