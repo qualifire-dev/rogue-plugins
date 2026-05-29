@@ -76,7 +76,7 @@ echo "upgrade available: $INSTALLED_TAG -> $LATEST, running installer"
 
 # Re-run the one-line installer in non-interactive mode. Creds already in env
 # from sourcing ~/.rogue-env above, so no prompts.
-INSTALLER_URL="${ROGUE_INSTALLER_URL:-https://raw.githubusercontent.com/qualifire-dev/rogue-install/main/install.sh}"
+INSTALLER_URL="${ROGUE_INSTALLER_URL:-https://raw.githubusercontent.com/qualifire-dev/rogue-plugin-claude/main/install.sh}"
 curl -fsSL --max-time 60 "$INSTALLER_URL" | ROGUE_NON_INTERACTIVE=1 bash
 RC=$?
 echo "installer exited rc=$RC"
