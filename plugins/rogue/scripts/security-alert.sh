@@ -28,6 +28,12 @@ else
   MSG="$MSG_ARG"
 fi
 
+# API-relayed block reasons carry literal "\n" (backslash + n, straight out of
+# the JSON string) rather than real newlines. Convert them so the modal shows
+# line breaks instead of printing "\n\n". Script runs under bash, so this
+# parameter expansion is safe.
+MSG="${MSG//\\n/$'\n'}"
+
 # Pick icon + sound by severity.
 case "$SEVERITY" in
   warning)
