@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Rogue presence heartbeat. Fired from SessionStart in the background.
 #
-# GETs /api/v1/hooks/status so this install shows up in the dashboard's Coding
+# POSTs /api/v1/hooks/status so this install shows up in the dashboard's Coding
 # Agents roster (Connected / version / host / user) and so the org learns which
 # plugin version is running. Pure side-effect: fire-and-forget, never blocks
 # Claude Code, never affects allow/deny, and exits 0 on every path.
@@ -45,15 +45,20 @@ case "$(printf '%s' "${CLAUDE_CODE_ENTRYPOINT:-}" | tr '[:upper:]' '[:lower:]')"
   *)         AGENT="Claude Code - CLI" ;;
 esac
 
-curl -sS --max-time 10 \
+# POST /api/v1/hooks/status (GET route is gone). The former x-rogue-agent-*
+# headers now ride the JSON body; x-rogue-api-key stays a header. Backslash- and
+# quote-escape each value so a name/host with a " or \ can't break the JSON.
+HOST=$(hostname 2>/dev/null || echo unknown)
+esc() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
+BODY=$(printf '{"agent_family":"claude","agent":"%s","version":"%s","host":"%s","actor_email":"%s","actor_name":"%s"}' \
+  "$(esc "$AGENT")" "$(esc "$VER")" "$(esc "$HOST")" \
+  "$(esc "${ROGUE_ACTOR_EMAIL:-}")" "$(esc "${ROGUE_ACTOR_NAME:-}")")
+
+curl -sS --max-time 10 -X POST \
   "${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/status" \
   -H "x-rogue-api-key: $ROGUE_API_KEY" \
-  -H "x-rogue-agent-family: claude" \
-  -H "x-rogue-agent: $AGENT" \
-  -H "x-rogue-agent-version: $VER" \
-  -H "x-rogue-host: $(hostname 2>/dev/null || echo unknown)" \
-  -H "x-rogue-actor-email: ${ROGUE_ACTOR_EMAIL:-}" \
-  -H "x-rogue-actor-name: ${ROGUE_ACTOR_NAME:-}" \
+  -H "Content-Type: application/json" \
+  -d "$BODY" \
   >/dev/null 2>&1 || true
 
 exit 0
