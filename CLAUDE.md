@@ -31,7 +31,7 @@ Every API-POST entry in `hooks.json` is a thin wrapper around `scripts/hook.sh`:
 
 `scripts/hook.sh <EventName>` is the orchestrator: sources env files, fail-opens on missing API key, sources `scripts/actor.sh` for actor resolution, POSTs stdin to `/api/v1/hooks/claude` with the four `x-rogue-*` headers, parses the response for a block decision, fires `scripts/security-alert.sh` in the background on block (skipped when `CLAUDE_CODE_ENTRYPOINT=cli`), and prints the API response to stdout. Logs every invocation to `$ROGUE_LOG_FILE` (default `~/.rogue/hook.log`); the logged `reason` is sanitized of control characters to prevent log forgery from server-controlled text.
 
-`scripts/warn.sh` is the SessionStart "not configured" nudge. `scripts/auto-update.sh` is the SessionStart background updater.
+`scripts/warn.sh` is the SessionStart "not configured" nudge. `scripts/auto-update.sh` is the SessionStart background updater. `scripts/heartbeat.sh` is the SessionStart background presence beacon — a fire-and-forget `GET /api/v1/hooks/status` (headers `x-rogue-agent-family: claude` — the fixed enum value — plus `x-rogue-agent` carrying the display label `Claude Code - CLI` / `Claude Code - Desktop` / `Claude Cowork` derived from `$CLAUDE_CODE_ENTRYPOINT`, `x-rogue-agent-version` from `plugin.json` via grep/sed, `x-rogue-host`, and the actor headers) that registers the install in the dashboard's Coding Agents roster and learns `update_available`. Independent of the per-event POSTs to `/api/v1/hooks/claude`. Reads the plugin version without `python3` for the same fresh-macOS reason as `hook.sh`.
 
 Invariants to preserve when editing hooks:
 
@@ -51,7 +51,7 @@ Invariants to preserve when editing hooks:
 ## Things that look weird but are intentional
 
 - Hooks are bash one-liners, not script files. This avoids needing to ship executable bits and keeps the manifest self-contained for `/plugin install`.
-- The `SessionStart` event has **three separate hook entries** (auto-update kick-off, unconfigured-warning, API POST) rather than one combined command. They run independently so a failure in one doesn't suppress the others.
+- The `SessionStart` event has **four separate hook entries** (auto-update kick-off, status-heartbeat kick-off, unconfigured-warning, API POST) rather than one combined command. They run independently so a failure in one doesn't suppress the others.
 - `auto-update.sh` uses `nohup ... &` from the `SessionStart` hook with a 2s timeout — the hook returns immediately and the updater runs detached. Don't try to "fix" the short timeout.
 - Release tarballs deliberately omit the version from the filename. The `/releases/latest/download/rogue-plugin-claude-darwin.tar.gz` URL is what `install.sh` fetches.
 - `rgx!` prompt prefix is a server-side convention (false-positive escape hatch). The plugin itself doesn't parse it — the API does.

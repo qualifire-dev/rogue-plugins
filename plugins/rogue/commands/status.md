@@ -45,27 +45,51 @@ If no sources are found OR `ROGUE_API_KEY` is empty after sourcing:
 
 Stop and don't proceed past this step in either of those cases.
 
-## Step 2: Test connection
+## Step 2: Test connection + register heartbeat
 
-Ping the API with the resolved key:
+Hit the status endpoint with the resolved key. This validates the key, registers
+this install in the dashboard's Coding Agents roster, and reports whether a newer
+plugin version exists. The plugin version is read from the manifest without
+`python3` (absent on a fresh macOS):
 
 ```bash
 . /tmp/rogue-source-env.sh
-curl -s -w "\n%{http_code}" -H "x-rogue-api-key: $ROGUE_API_KEY" \
-  "${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/ping"
+PJ=$(find "$HOME/.claude/plugins" -path '*rogue*/.claude-plugin/plugin.json' 2>/dev/null | head -1)
+VER=$(grep -oE '"version"[[:space:]]*:[[:space:]]*"[0-9][^"]*"' "$PJ" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+case "$(printf '%s' "${CLAUDE_CODE_ENTRYPOINT:-}" | tr '[:upper:]' '[:lower:]')" in
+  *cowork*)  AGENT="Claude Cowork" ;;
+  *desktop*) AGENT="Claude Code - Desktop" ;;
+  *)         AGENT="Claude Code - CLI" ;;
+esac
+curl -s -w "\n%{http_code}" \
+  "${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/status" \
+  -H "x-rogue-api-key: $ROGUE_API_KEY" \
+  -H "x-rogue-agent-family: claude" \
+  -H "x-rogue-agent: $AGENT" \
+  -H "x-rogue-agent-version: ${VER:-unknown}" \
+  -H "x-rogue-host: $(hostname)" \
+  -H "x-rogue-actor-email: ${ROGUE_ACTOR_EMAIL:-}" \
+  -H "x-rogue-actor-name: ${ROGUE_ACTOR_NAME:-}"
 ```
 
-Report whether the connection succeeded (HTTP 200) or failed. On failure, suggest:
+Report from the JSON response (HTTP 200 = connected):
 
-- Confirm network reachability to `api.rogue.security` (or `${ROGUE_BASE_URL}`).
-- Compare the resolved key tail (printed in Step 1) against what's in the
-  [API keys dashboard](https://app.rogue.security/settings/api-keys).
-- If the key looks wrong, the precedence chain may be picking up a stale source
-  — check the source list from Step 1.
+- **Connected** — `connected: true`
+- **Organization** — `organization.name`
+- **Version** — `agent.version` (running) vs `agent.latest_version`; if
+  `agent.update_available` is `true`, note that auto-update will pick it up.
+
+On failure suggest:
+
+- HTTP 401 → key invalid. Compare the resolved key tail (Step 1) against the
+  [API keys dashboard](https://app.rogue.security/settings/api-keys); the
+  precedence chain may be picking up a stale source — check Step 1's list.
+- HTTP 400 → unexpected (the `x-rogue-agent-family` header above should prevent it).
+- No response → confirm network reachability to `api.rogue.security` (or `${ROGUE_BASE_URL}`).
 
 ## Step 3: Fetch configuration
 
-If the ping succeeded, fetch the active config:
+If the connection succeeded, fetch the active config:
 
 ```bash
 . /tmp/rogue-source-env.sh

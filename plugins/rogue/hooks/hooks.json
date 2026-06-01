@@ -16,6 +16,16 @@
         "hooks": [
           {
             "type": "command",
+            "command": "( nohup bash \"${CLAUDE_PLUGIN_ROOT}/scripts/heartbeat.sh\" >/dev/null 2>&1 & )",
+            "timeout": 2
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/warn.sh\" || true",
             "timeout": 2
           }

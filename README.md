@@ -10,11 +10,13 @@ reach production.
 One-line installer (recommended):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/qualifire-dev/rogue-install/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/qualifire-dev/rogue-plugin-claude/main/install.sh | bash
 ```
 
-The installer downloads this plugin into Claude Code's plugin cache, enables it
-in `~/.claude/settings.json`, and writes credentials to `~/.rogue-env`.
+The installer adds the marketplace and installs the plugin via the Claude CLI
+(`claude plugin marketplace add` + `claude plugin install`), validates and writes
+your API key to `~/.rogue-env`, confirms your actor identity, and configures a
+`Rogue Security` status badge below the prompt (🟢 connected / 🔴 not set up).
 
 Manual install (inside Claude Code v2.1+):
 

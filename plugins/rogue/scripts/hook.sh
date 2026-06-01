@@ -65,9 +65,29 @@ if [ "$BLOCK" = "1" ]; then
 
   log "outcome=block reason=\"$(sanitize "$REASON")\""
   if [ "${CLAUDE_CODE_ENTRYPOINT:-}" != "cli" ]; then
+    # Build a clear, self-explanatory alert: an outcome+what title, then the
+    # server reason under a "Why:" label, then the override instruction. Naming
+    # the blocked thing (prompt / tool call) and the fix makes the modal
+    # actionable instead of dumping a raw detection code.
+    case "$EVENT" in
+      UserPromptSubmit)            NOUN="prompt" ;;
+      PreToolUse|PermissionRequest) NOUN="tool call" ;;
+      *)                           NOUN="action" ;;
+    esac
+    ALERT_TITLE="⛔ Rogue blocked this $NOUN"
+    ALERT_MSG="Why:
+$REASON"
+    # Only add the override line if the reason doesn't already explain rgx!,
+    # so we don't print the instruction twice.
+    case "$REASON" in
+      *rgx!*) : ;;
+      *) ALERT_MSG="$ALERT_MSG
+
+To allow it: prepend \"rgx!\" to your prompt and resend (marks it a false positive)." ;;
+    esac
     # Background the alert so hook.sh returns immediately. Capture exit code
     # afterward so TCC denials / osascript failures become visible in the log.
-    ( bash "${CLAUDE_PLUGIN_ROOT}/scripts/security-alert.sh" "Rogue Security" "$REASON" critical >/dev/null 2>&1; log "alert_rc=$? entrypoint=${CLAUDE_CODE_ENTRYPOINT:-unset}" ) &
+    ( bash "${CLAUDE_PLUGIN_ROOT}/scripts/security-alert.sh" "$ALERT_TITLE" "$ALERT_MSG" critical >/dev/null 2>&1; log "alert_rc=$? entrypoint=${CLAUDE_CODE_ENTRYPOINT:-unset}" ) &
   else
     log "alert_skipped=cli"
   fi
