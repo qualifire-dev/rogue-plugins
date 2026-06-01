@@ -95,13 +95,20 @@ have_cmd() { command -v "$1" >/dev/null 2>&1; }
 # ── Marketplace + plugin install (Claude) ─────────────────────────────────────
 claude_install_plugin() {
   note "Adding marketplace ${C_DIM}$ROGUE_PLUGIN_REPO${C_RESET}"
-  if claude plugin marketplace add "$ROGUE_PLUGIN_REPO" >/dev/null 2>&1; then
+  # Capture stderr so a real failure (e.g. missing git, clone error) is surfaced
+  # instead of swallowed — otherwise it resurfaces later as a misleading
+  # "plugin not found" from the install step.
+  local add_err
+  if add_err="$(claude plugin marketplace add "$ROGUE_PLUGIN_REPO" 2>&1)"; then
     ok "Marketplace added"
   else
     # Already present (or transient) — refresh from source instead.
-    claude plugin marketplace update "$MARKETPLACE_NAME" >/dev/null 2>&1 \
-      && ok "Marketplace updated" \
-      || warn "Could not add or update marketplace (continuing — it may already be present)"
+    if claude plugin marketplace update "$MARKETPLACE_NAME" >/dev/null 2>&1; then
+      ok "Marketplace updated"
+    else
+      warn "Could not add or update marketplace (continuing — it may already be present)"
+      [ -n "$add_err" ] && note "${C_DIM}${add_err}${C_RESET}"
+    fi
   fi
 
   note "Installing plugin ${C_DIM}${PLUGIN_NAME}@${MARKETPLACE_NAME}${C_RESET}"
@@ -306,6 +313,15 @@ configure_statusline() {
 install_claude() {
   printf '\n%sRogue Security%s — Claude Code\n' "$C_TEAL" "$C_RESET" >&2
   have_cmd claude || die "Claude Code CLI not found on PATH. Install it from https://claude.com/code first."
+  # Claude Code shells out to system git to clone the marketplace. A fresh
+  # machine without git makes the clone fail — name it here instead of letting
+  # it surface later as a misleading "plugin not found". Hint per-OS.
+  if ! have_cmd git; then
+    case "$(uname -s 2>/dev/null)" in
+      Darwin) die "git not found. Install the Command Line Tools first: xcode-select --install" ;;
+      *)      die "git not found. Install it via your package manager (e.g. apt install git, or dnf install git)." ;;
+    esac
+  fi
   claude_install_plugin
   configure_credentials
   configure_statusline
