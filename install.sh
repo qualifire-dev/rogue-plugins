@@ -22,6 +22,21 @@
 #   ROGUE_NO_STATUSLINE=1     skip the status-badge setup
 #   NO_COLOR=1                disable ANSI color
 #
+# CLI flags (equivalent to the env knobs; pass after `bash -s --`):
+#   curl -fsSL .../install.sh | bash -s -- --api-key="rg_xxx" --non-interactive
+#
+#   --api-key=KEY          same as ROGUE_API_KEY
+#   --actor-email=EMAIL    same as ROGUE_ACTOR_EMAIL
+#   --actor-name=NAME      same as ROGUE_ACTOR_NAME
+#   --non-interactive      same as ROGUE_NON_INTERACTIVE=1
+#   --no-statusline        same as ROGUE_NO_STATUSLINE=1
+#   --plugin-repo=OWNER/R  same as ROGUE_PLUGIN_REPO
+#   --base-url=URL         same as ROGUE_BASE_URL
+#   -h | --help            print this and exit
+#
+# Note: a key on the command line is visible in `ps` and shell history. For
+# unattended/MDM installs the env-var form (ROGUE_API_KEY=...) is preferable.
+#
 set -u
 
 # ── Config ──────────────────────────────────────────────────────────────────
@@ -131,14 +146,20 @@ STATUS_ORG=""
 STATUS_UPDATE=""
 status_check() { # status_check <api-key> <actor-email>
   have_cmd curl || { printf ''; return; }
-  local resp code body
-  resp=$(curl -s -w $'\n%{http_code}' --max-time 10 \
+  local resp code body host json
+  host="$(hostname 2>/dev/null || echo unknown)"
+  # POST /api/v1/hooks/status with a JSON body — the GET route was removed
+  # (see plugins/rogue/scripts/heartbeat.sh). The former x-rogue-agent-*
+  # headers now ride the body; x-rogue-api-key stays a header. esc() so a host
+  # or email with a " or \ can't break the JSON.
+  esc() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
+  json=$(printf '{"agent_family":"claude","agent":"Claude Code - CLI","host":"%s","actor_email":"%s"}' \
+    "$(esc "$host")" "$(esc "${2:-}")")
+  resp=$(curl -s -w $'\n%{http_code}' --max-time 10 -X POST \
     "$ROGUE_BASE_URL/api/v1/hooks/status" \
     -H "x-rogue-api-key: $1" \
-    -H "x-rogue-agent-family: claude" \
-    -H "x-rogue-agent: Claude Code - CLI" \
-    -H "x-rogue-host: $(hostname 2>/dev/null || echo unknown)" \
-    -H "x-rogue-actor-email: ${2:-}" 2>/dev/null) || { printf ''; return; }
+    -H "Content-Type: application/json" \
+    -d "$json" 2>/dev/null) || { printf ''; return; }
   code="${resp##*$'\n'}"
   body="${resp%$'\n'*}"
   if [ "$code" = "200" ]; then
@@ -155,27 +176,41 @@ key_hint() { # key_hint <key>
 }
 
 configure_credentials() {
+  # Capture explicit input (CLI flags / env vars) BEFORE sourcing the on-disk
+  # files — otherwise a stored key would clobber a key the caller passed to
+  # rotate it. Explicit user intent wins; on-disk is the fallback.
+  local flag_key="${ROGUE_API_KEY:-}"
+  local flag_email="${ROGUE_ACTOR_EMAIL:-}"
+  local flag_name="${ROGUE_ACTOR_NAME:-}"
+
   # Pull anything already on disk / in env into scope.
   [ -r /etc/rogue/env ] && . /etc/rogue/env
   [ -r "$ENV_FILE" ]    && . "$ENV_FILE"
 
-  local cur_key="${ROGUE_API_KEY:-}"
+  local cur_key="${flag_key:-${ROGUE_API_KEY:-}}"
 
   # Resolve actor defaults up front (same cascade as plugins/rogue/scripts/actor.sh)
   # so key validation can register the roster row under the real email, deduped
-  # with the later SessionStart heartbeats.
+  # with the later SessionStart heartbeats. Explicit flag/env beats on-disk.
   local def_email def_name
-  def_email="${ROGUE_ACTOR_EMAIL:-$(git config --global user.email 2>/dev/null)}"
-  def_name="${ROGUE_ACTOR_NAME:-$(git config --global user.name 2>/dev/null)}"
+  def_email="${flag_email:-${ROGUE_ACTOR_EMAIL:-$(git config --global user.email 2>/dev/null)}}"
+  def_name="${flag_name:-${ROGUE_ACTOR_NAME:-$(git config --global user.name 2>/dev/null)}}"
   [ -n "$def_email" ] || def_email="${CLAUDE_CODE_USER_EMAIL:-}"
   [ -n "$def_name" ]  || def_name="${CLAUDE_CODE_USER_EMAIL%@*}"
   [ -n "$def_email" ] || def_email="$(hostname 2>/dev/null)"
   [ -n "$def_name" ]  || def_name="$(whoami 2>/dev/null)"
 
-  # Non-interactive: keep whatever is configured, or nudge if nothing is.
+  # Non-interactive: persist whatever key is in scope (env-passed or on-disk),
+  # filling actor identity from the resolved cascade. A key passed only via the
+  # ROGUE_API_KEY env var is otherwise lost — it never reaches ~/.rogue-env, so
+  # runtime hooks (which source the file, not the installer's env) fail-open.
   if [ "$NON_INTERACTIVE" = "1" ]; then
     if [ -n "$cur_key" ]; then
-      note "API key already configured (${C_DIM}$(key_hint "$cur_key")${C_RESET}) — leaving credentials as-is"
+      ROGUE_API_KEY="$cur_key"
+      ROGUE_ACTOR_EMAIL="$def_email"
+      ROGUE_ACTOR_NAME="$def_name"
+      write_env_file
+      note "API key configured (${C_DIM}$(key_hint "$cur_key")${C_RESET})"
     else
       note "No API key set and running non-interactively — skipping."
       note "Run ${C_DIM}/rogue:setup${C_RESET} inside Claude Code to connect your key."
@@ -224,7 +259,12 @@ configure_credentials() {
   ROGUE_ACTOR_EMAIL="${in_email:-$def_email}"
   ROGUE_ACTOR_NAME="${in_name:-$def_name}"
 
-  # --- Write ~/.rogue-env (mode 600), same format as setup.sh ---
+  write_env_file
+}
+
+# Write ~/.rogue-env (mode 600), same format as setup.sh. Reads ROGUE_API_KEY /
+# ROGUE_ACTOR_EMAIL / ROGUE_ACTOR_NAME from scope.
+write_env_file() {
   umask 077
   : > "$ENV_FILE"
   {
@@ -331,8 +371,35 @@ install_claude() {
   note "Open a new Claude Code session, then run ${C_DIM}/rogue:status${C_RESET} to verify."
 }
 
+# ── CLI flags ─────────────────────────────────────────────────────────────────
+# Accepts `--flag=value` and `--flag value`. Sets the same globals the env knobs
+# do, so the rest of the script is flag-agnostic. CLI flags override env vars.
+usage() { sed -n '2,40p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; }
+
+parse_args() {
+  while [ "$#" -gt 0 ]; do
+    local arg="$1" val=""
+    case "$arg" in
+      --*=*) val="${arg#*=}"; arg="${arg%%=*}" ;;
+    esac
+    case "$arg" in
+      --api-key)         [ -n "$val" ] || { val="$2"; shift; }; ROGUE_API_KEY="$val" ;;
+      --actor-email)     [ -n "$val" ] || { val="$2"; shift; }; ROGUE_ACTOR_EMAIL="$val" ;;
+      --actor-name)      [ -n "$val" ] || { val="$2"; shift; }; ROGUE_ACTOR_NAME="$val" ;;
+      --plugin-repo)     [ -n "$val" ] || { val="$2"; shift; }; ROGUE_PLUGIN_REPO="$val" ;;
+      --base-url)        [ -n "$val" ] || { val="$2"; shift; }; ROGUE_BASE_URL="$val" ;;
+      --non-interactive) NON_INTERACTIVE=1 ;;
+      --no-statusline)   ROGUE_NO_STATUSLINE=1 ;;
+      -h|--help)         usage; exit 0 ;;
+      *)                 die "Unknown argument: $arg (try --help)" ;;
+    esac
+    shift
+  done
+}
+
 # ── Dispatch: detect installed agents, install for each ───────────────────────
 main() {
+  parse_args "$@"
   local found=0
   # Only `claude` is wired today. Future: loop the AGENTS matrix above.
   if have_cmd claude; then
