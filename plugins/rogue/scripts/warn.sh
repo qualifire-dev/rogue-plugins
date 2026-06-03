@@ -5,4 +5,6 @@
 [ -r /etc/rogue/env ]               && . /etc/rogue/env
 [ -r "$HOME/.rogue-env" ]           && . "$HOME/.rogue-env"
 
+[ -z "${CLAUDE_CODE_ENTRYPOINT:-}" ] && exit 0
+
 [ -n "${ROGUE_API_KEY:-}" ] || printf '{"systemMessage": "[Rogue Security] Not configured. Run /rogue:setup to connect your API key."}'

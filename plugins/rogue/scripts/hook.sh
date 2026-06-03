@@ -9,6 +9,8 @@ EVENT="$1"
 [ -r /etc/rogue/env ]               && . /etc/rogue/env
 [ -r "$HOME/.rogue-env" ]           && . "$HOME/.rogue-env"
 
+[ -z "${CLAUDE_CODE_ENTRYPOINT:-}" ] && echo '{}' && exit 0
+
 ROGUE_LOG_FILE="${ROGUE_LOG_FILE:-$HOME/.rogue/hook.log}"
 log() {
   mkdir -p "$(dirname "$ROGUE_LOG_FILE")" 2>/dev/null

@@ -15,6 +15,8 @@ set -u
 [ -r /etc/rogue/env ]                && . /etc/rogue/env
 [ -r "$HOME/.rogue-env" ]            && . "$HOME/.rogue-env"
 
+[ -z "${CLAUDE_CODE_ENTRYPOINT:-}" ] && exit 0
+
 # Not configured → no-op (mirrors hook.sh fail-open on missing key).
 [ -n "${ROGUE_API_KEY:-}" ] || exit 0
 

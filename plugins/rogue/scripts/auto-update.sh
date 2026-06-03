@@ -13,6 +13,8 @@
 # Silent on every failure path. All activity logs to ~/.rogue/auto-update.log
 # for diagnostics.
 
+[ -z "${CLAUDE_CODE_ENTRYPOINT:-}" ] && exit 0
+
 set -u
 
 LOG="$HOME/.rogue/auto-update.log"
