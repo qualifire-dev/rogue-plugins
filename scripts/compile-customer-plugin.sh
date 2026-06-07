@@ -91,7 +91,7 @@ if [ -z "$FROM" ]; then
 fi
 echo "-> using release: $FROM"
 
-TARBALL_URL="https://github.com/${REPO}/releases/download/${FROM}/rogue-plugin-claude-darwin.tar.gz"
+TARBALL_URL="https://github.com/${REPO}/releases/download/${FROM}/rogue-plugin-claude.tar.gz"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 

@@ -5,6 +5,13 @@
 
 EVENT="$1"
 
+# Git Bash stand-down: on native Windows hook.ps1 owns event handling. Git Bash's
+# `~` maps to %USERPROFILE% — the SAME creds hook.ps1 reads — so without this both
+# would POST (and double-alert on a block). macOS/Linux/WSL fall through and run.
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*) echo '{}'; exit 0 ;;
+esac
+
 [ -r "${CLAUDE_PLUGIN_ROOT}/env" ]  && . "${CLAUDE_PLUGIN_ROOT}/env"
 [ -r /etc/rogue/env ]               && . /etc/rogue/env
 [ -r "$HOME/.rogue-env" ]           && . "$HOME/.rogue-env"

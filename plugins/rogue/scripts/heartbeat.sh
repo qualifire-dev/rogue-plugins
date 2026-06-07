@@ -10,6 +10,11 @@
 # send a stable x-rogue-host + x-rogue-actor-email.
 set -u
 
+# Git Bash stand-down: heartbeat.ps1 owns native Windows (same reason as hook.sh).
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*) exit 0 ;;
+esac
+
 # Same env precedence as hook.sh (later wins): bundled → MDM → per-user.
 [ -r "${CLAUDE_PLUGIN_ROOT:-}/env" ] && . "${CLAUDE_PLUGIN_ROOT}/env"
 [ -r /etc/rogue/env ]                && . /etc/rogue/env
