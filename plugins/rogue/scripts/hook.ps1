@@ -252,7 +252,7 @@ $resp = ''
 try {
     $r = Invoke-WebRequest -Uri $url -Method Post `
         -Headers $headers -ContentType 'application/json' -Body $bodyBytes `
-        -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+        -UseBasicParsing -TimeoutSec 4 -ErrorAction Stop
     Dbg "HTTP $($r.StatusCode), body length $($r.Content.Length)"
     if ($r.StatusCode -eq 200) {
         # Decode explicitly as UTF-8. Invoke-WebRequest's .Content mis-decodes as

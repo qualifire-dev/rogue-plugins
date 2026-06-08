@@ -39,7 +39,7 @@ RESP=$(curl -sS -X POST "${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/ho
   -H "x-rogue-actor-email: $ROGUE_ACTOR_EMAIL" \
   -H "x-rogue-actor-name: $ROGUE_ACTOR_NAME" \
   -H 'Content-Type: application/json' \
-  --data-binary @- --max-time 10 || echo '{}')
+  --data-binary @- --max-time 4 || echo '{}')
 
 # Always log raw response so block-detection bugs are diagnosable from
 # ~/.rogue/hook.log alone, without re-instrumenting the script.
