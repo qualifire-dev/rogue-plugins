@@ -277,6 +277,7 @@ Log "raw=$(Sanitize $respHead)"
 #   "permissionDecision":"deny"  PreToolUse (inside hookSpecificOutput)
 #   "behavior":"deny"            PermissionRequest (inside hookSpecificOutput.decision)
 $blockRe = '"decision"\s*:\s*"block"|"continue"\s*:\s*false|"permissionDecision"\s*:\s*"deny"|"behavior"\s*:\s*"deny"'
+$fireAlert = $false
 if ($resp -imatch $blockRe) {
     # Extract reason (first match across the field names the formatter uses).
     $reason = $null
@@ -297,25 +298,7 @@ if ($resp -imatch $blockRe) {
         if ($reason -notlike '*rgx!*') {
             $alertMsg += "`n`nTo allow it: prepend `"rgx!`" to your prompt and resend (marks it a false positive)."
         }
-        # Launch the modal detached so the hook returns immediately (mirrors the
-        # backgrounded osascript launch in hook.sh). Pass title/msg via env vars so
-        # quoting/newlines can't break a -Command string. Load security-alert.ps1
-        # via a scriptblock (no -File) so ExecutionPolicy/GPO never blocks it.
-        try {
-            $alert = Join-Path $pluginRoot 'scripts\security-alert.ps1'
-            if (Test-Path -LiteralPath $alert) {
-                $env:ROGUE_ALERT_TITLE = $alertTitle
-                $env:ROGUE_ALERT_MSG = $alertMsg
-                $env:ROGUE_ALERT_SEVERITY = 'critical'
-                $alertEsc = $alert.Replace("'", "''")
-                $boot = "& ([scriptblock]::Create((Get-Content -Raw -LiteralPath '$alertEsc')))"
-                Start-Process -FilePath 'powershell' -WindowStyle Hidden -ArgumentList @(
-                    '-NoProfile', '-NonInteractive', '-Command', $boot) | Out-Null
-                Log "alert_launched=1 entrypoint=$($env:CLAUDE_CODE_ENTRYPOINT)"
-            } else {
-                Log "alert_skipped=missing_script"
-            }
-        } catch { Log "alert_error=$(Sanitize $_.Exception.Message)" }
+        $fireAlert = $true
     } else {
         Log "alert_skipped=cli"
     }
@@ -323,5 +306,32 @@ if ($resp -imatch $blockRe) {
     Log "outcome=allow"
 }
 
+# Relay the decision to Claude FIRST and flush it, BEFORE launching the modal, so
+# the block is delivered even if the modal lingers on screen. The modal runs in a
+# separate, non-blocking Start-Process (its own fds), so it can never hold Claude's
+# stdout open or delay the decision — the sibling hook.sh fix detaches the
+# backgrounded alert's fds for the same reason.
 Emit-Json $resp
+
+if ($fireAlert) {
+    # Launch the modal detached (separate process, own handles). Pass title/msg via
+    # env vars so quoting/newlines can't break a -Command string. Load
+    # security-alert.ps1 via a scriptblock (no -File) so ExecutionPolicy/GPO never
+    # blocks it.
+    try {
+        $alert = Join-Path $pluginRoot 'scripts\security-alert.ps1'
+        if (Test-Path -LiteralPath $alert) {
+            $env:ROGUE_ALERT_TITLE = $alertTitle
+            $env:ROGUE_ALERT_MSG = $alertMsg
+            $env:ROGUE_ALERT_SEVERITY = 'critical'
+            $alertEsc = $alert.Replace("'", "''")
+            $boot = "& ([scriptblock]::Create((Get-Content -Raw -LiteralPath '$alertEsc')))"
+            Start-Process -FilePath 'powershell' -WindowStyle Hidden -ArgumentList @(
+                '-NoProfile', '-NonInteractive', '-Command', $boot) | Out-Null
+            Log "alert_launched=1 entrypoint=$($env:CLAUDE_CODE_ENTRYPOINT)"
+        } else {
+            Log "alert_skipped=missing_script"
+        }
+    } catch { Log "alert_error=$(Sanitize $_.Exception.Message)" }
+}
 exit 0
