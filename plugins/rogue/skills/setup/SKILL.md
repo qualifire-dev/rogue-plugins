@@ -1,5 +1,6 @@
 ---
 description: Set up Rogue Security AIDR integration — configure API key, detect identity, and verify connection
+disable-model-invocation: true
 ---
 
 # Rogue Security Setup

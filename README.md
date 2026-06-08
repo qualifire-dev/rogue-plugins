@@ -51,8 +51,8 @@ Get an API key at <https://app.rogue.security/settings/api-keys>.
 ```
 .claude-plugin/plugin.json   — plugin manifest
 hooks/hooks.json             — 11 lifecycle hooks; each fires an sh + a PowerShell entry
-commands/setup.md            — /rogue:setup slash command
-commands/status.md           — /rogue:status slash command
+skills/setup/SKILL.md        — /rogue:setup slash command
+skills/status/SKILL.md       — /rogue:status slash command
 scripts/hook.sh              — POSIX-sh + curl dispatcher (macOS/Linux/WSL)
 scripts/hook.ps1             — PowerShell dispatcher (native Windows)
 scripts/setup.sh / setup.ps1 — credential storage helpers
