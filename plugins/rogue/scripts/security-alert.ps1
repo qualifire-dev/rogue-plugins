@@ -28,31 +28,24 @@ if ($null -eq $Message) { $Message = '' }
 # breaks instead of printing "\n" (mirrors security-alert.sh:35).
 $Message = $Message -replace '\\n', "`n"
 
+# Severity -> WScript.Shell.Popup type code. The low bits are the button set
+# (0 = OK); the icon bits are 16 = Stop (critical), 48 = Exclamation (warning),
+# 64 = Information.
+switch ($Severity) {
+    'warning' { $type = 48 }
+    'info'    { $type = 64 }
+    default   { $type = 16 }
+}
+
+# WScript.Shell.Popup reliably surfaces on the interactive desktop from a detached,
+# hidden background process (e.g. Cowork's hook runner) - it needs no assembly load
+# (System.Windows.Forms) and isn't subject to the owner-window / DefaultDesktopOnly
+# window-station constraints that made MessageBox::Show silently no-op there.
+# Second arg 0 = no auto-dismiss timeout. Runs in a detached process, so a lingering
+# dialog never blocks the hook.
 try {
-    Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
-    Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
-
-    switch ($Severity) {
-        'warning' { $icon = [System.Windows.Forms.MessageBoxIcon]::Warning }
-        'info'    { $icon = [System.Windows.Forms.MessageBoxIcon]::Information }
-        default   { $icon = [System.Windows.Forms.MessageBoxIcon]::Error }
-    }
-
-    # A hidden, topmost owner form forces the message box in front of other windows
-    # (a plain MessageBox::Show can open behind the active app).
-    $owner = New-Object System.Windows.Forms.Form
-    $owner.TopMost = $true
-    $owner.ShowInTaskbar = $false
-    $owner.WindowState = [System.Windows.Forms.FormWindowState]::Minimized
-
-    [void][System.Windows.Forms.MessageBox]::Show(
-        $owner, $Message, $Title,
-        [System.Windows.Forms.MessageBoxButtons]::OK,
-        $icon,
-        [System.Windows.Forms.MessageBoxDefaultButton]::Button1,
-        [System.Windows.Forms.MessageBoxOptions]::DefaultDesktopOnly)
-
-    $owner.Dispose()
+    $wsh = New-Object -ComObject 'WScript.Shell'
+    $null = $wsh.Popup($Message, 0, $Title, $type)
 } catch {
     # Last resort: write to stderr (visible in the hook log under ROGUE_DEBUG).
     [Console]::Error.WriteLine("[$Severity] $Title`: $Message")
