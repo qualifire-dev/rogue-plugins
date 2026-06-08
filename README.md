@@ -50,7 +50,7 @@ Get an API key at <https://app.rogue.security/settings/api-keys>.
 
 ```
 .claude-plugin/plugin.json   — plugin manifest
-hooks/hooks.json             — 12 lifecycle hooks; each fires an sh + a PowerShell entry
+hooks/hooks.json             — 11 lifecycle hooks; each fires an sh + a PowerShell entry
 commands/setup.md            — /rogue:setup slash command
 commands/status.md           — /rogue:status slash command
 scripts/hook.sh              — POSIX-sh + curl dispatcher (macOS/Linux/WSL)
@@ -62,7 +62,7 @@ scripts/setup.sh / setup.ps1 — credential storage helpers
 
 `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
 `PostToolUseFailure`, `PermissionRequest`, `Stop`, `SessionEnd`,
-`SubagentStart`, `SubagentStop`, `InstructionsLoaded`, `ConfigChange`.
+`SubagentStart`, `SubagentStop`, `ConfigChange`.
 
 All hooks are `type: "command"`. Each event registers **two** entries — a POSIX
 `sh` one (`hook.sh`, for macOS/Linux/WSL) and a PowerShell one (`hook.ps1`, for

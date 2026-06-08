@@ -210,23 +210,6 @@
         ]
       }
     ],
-    "InstructionsLoaded": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" InstructionsLoaded || echo '{}'",
-            "timeout": 12
-          },
-          {
-            "type": "command",
-            "command": "powershell -NoProfile -NonInteractive -Command \"& ([scriptblock]::Create((Get-Content -Raw -LiteralPath (Join-Path $env:CLAUDE_PLUGIN_ROOT 'scripts/hook.ps1')))) InstructionsLoaded\"",
-            "timeout": 15
-          }
-        ]
-      }
-    ],
     "ConfigChange": [
       {
         "matcher": "",

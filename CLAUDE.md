@@ -14,7 +14,7 @@ There is no build step for the plugin itself: it's a directory of JSON + shell s
 
 - `.claude-plugin/marketplace.json` — marketplace manifest. Points at `./plugins/rogue`.
 - `plugins/rogue/.claude-plugin/plugin.json` — plugin manifest. **`version` here is the source of truth** — `build-release.sh` reads it, and `auto-update.sh` compares it against the latest GitHub release tag (`v${version}`).
-- `plugins/rogue/hooks/hooks.json` — 12 lifecycle hooks, all `type: "command"`. **Every event registers two entries** (an `sh` one and a PowerShell one) — see below.
+- `plugins/rogue/hooks/hooks.json` — 11 lifecycle hooks, all `type: "command"`. **Every event registers two entries** (an `sh` one and a PowerShell one) — see below.
 - `plugins/rogue/scripts/hook.sh` — POSIX-`sh` + `curl` dispatcher (macOS/Linux/WSL). Invoked via `sh` (NOT `bash`), so it is kept POSIX-clean (tested under `dash` via `tests/test_hook_sh.sh`). **Stands down** (emits `{}`, exits) under Git Bash (`uname` = MINGW/MSYS/CYGWIN) so the PowerShell entry owns native Windows.
 - `plugins/rogue/scripts/hook.ps1` — PowerShell + `Invoke-WebRequest` dispatcher. Owns native Windows; stands down on non-Windows (`pwsh` on macOS/Linux). Mirrors `hook.sh` stage-for-stage AND replicates Claude's block detection, native modal, logging, and SessionStart unconfigured hint.
 - `plugins/rogue/scripts/setup.sh` / `setup.ps1` — write `~/.rogue-env` (mode 600) / `%USERPROFILE%\.rogue-env` (ACL-restricted) with `ROGUE_API_KEY` / `ROGUE_ACTOR_EMAIL` / `ROGUE_ACTOR_NAME`. Both emit the same `export KEY=value` POSIX-quoted format. Called by `/rogue:setup`.
