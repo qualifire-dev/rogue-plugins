@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Rogue Security — one-line installer for Claude Code (Windows).
+    Rogue Security - one-line installer for Claude Code (Windows).
 .DESCRIPTION
     iwr -useb https://raw.githubusercontent.com/qualifire-dev/rogue-plugin-claude/main/install.ps1 | iex
 
@@ -13,7 +13,7 @@
     .\install.ps1 -NonInteractive
 
     Installs the plugin through the official Claude CLI (marketplace add + plugin
-    install) — the same mechanism as install.sh — validates and stores your API
+    install) - the same mechanism as install.sh - validates and stores your API
     key, and confirms your actor identity.
 
     Unlike the runtime hooks (which fail OPEN so Claude Code never hangs on Rogue
@@ -68,7 +68,7 @@ try {
 } catch {}
 
 Write-Host ""
-Write-Host "Rogue Security — Claude Code (Windows)" -ForegroundColor Cyan
+Write-Host "Rogue Security - Claude Code (Windows)" -ForegroundColor Cyan
 
 # Claude CLI + git are required (Claude shells out to git to clone the marketplace).
 if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
@@ -100,7 +100,7 @@ Load-ExistingCreds
 
 if (-not $ApiKey) {
     if ($NonInteractive) {
-        Warn2 'No API key set and running non-interactively — skipping key setup.'
+        Warn2 'No API key set and running non-interactively - skipping key setup.'
         Warn2 'Run /rogue:setup inside Claude Code to connect your key later.'
     } else {
         $secure = Read-Host 'Rogue API key (rsk_...)' -AsSecureString
@@ -130,15 +130,15 @@ if ($ApiKey) {
         $resp = Invoke-WebRequest -Uri "$($BaseUrl.TrimEnd('/'))/api/v1/hooks/status" -Method Post `
             -Headers @{ 'x-rogue-api-key' = $ApiKey } -ContentType 'application/json' `
             -Body $bytes -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
-        if ($resp.StatusCode -eq 200) { Ok 'Key validated.' } else { Warn2 "Unexpected response (HTTP $($resp.StatusCode)) — saving without verification." }
+        if ($resp.StatusCode -eq 200) { Ok 'Key validated.' } else { Warn2 "Unexpected response (HTTP $($resp.StatusCode)) - saving without verification." }
     } catch {
         $code = $null
         if ($_.Exception.Response) { try { $code = [int]$_.Exception.Response.StatusCode } catch {} }
         if ($code -eq 401 -or $code -eq 403) {
             if ($NonInteractive) { Die "Invalid API key (HTTP $code)." }
-            Warn2 "Invalid key (HTTP $code) — saving anyway. Verify it at https://app.rogue.security/settings/api-keys"
+            Warn2 "Invalid key (HTTP $code) - saving anyway. Verify it at https://app.rogue.security/settings/api-keys"
         } else {
-            Warn2 "Could not reach $BaseUrl to validate — saving without verification."
+            Warn2 "Could not reach $BaseUrl to validate - saving without verification."
         }
     }
 
@@ -166,7 +166,7 @@ if ($ApiKey) {
 }
 
 # Install through the Claude CLI marketplace (cross-platform; same as install.sh).
-# `claude` is a native command — a non-zero exit does NOT throw, so gate on
+# `claude` is a native command - a non-zero exit does NOT throw, so gate on
 # $LASTEXITCODE (the catch only fires if the process can't be spawned at all),
 # mirroring the plugin-install block below.
 Log "Adding marketplace $PluginRepo"
@@ -175,10 +175,10 @@ try { & claude plugin marketplace add $PluginRepo 2>&1 | Out-Null; if ($LASTEXIT
 if ($mktOk) {
     Ok 'Marketplace added'
 } else {
-    # Already present (or transient) — refresh from source instead.
+    # Already present (or transient) - refresh from source instead.
     try { & claude plugin marketplace update $MarketplaceName 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) { $mktOk = $true } } catch {}
     if ($mktOk) { Ok 'Marketplace updated' }
-    else { Warn2 'Could not add or update marketplace (continuing — it may already be present).' }
+    else { Warn2 'Could not add or update marketplace (continuing - it may already be present).' }
 }
 
 Log "Installing plugin $PluginName@$MarketplaceName"

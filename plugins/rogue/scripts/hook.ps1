@@ -1,25 +1,25 @@
-# Rogue Security hook dispatcher for Claude Code — PowerShell implementation.
+# Rogue Security hook dispatcher for Claude Code - PowerShell implementation.
 #
 # Cross-platform sibling of hook.sh. hooks.json fires BOTH an `sh` entry and a
 # PowerShell entry for every event; exactly one does real work per machine:
 #
-#   • macOS / Linux / WSL         → hook.sh runs (curl POST); `powershell` is
+#   * macOS / Linux / WSL         -> hook.sh runs (curl POST); `powershell` is
 #                                   absent so this entry fails to spawn.
-#   • native Windows + Git Bash   → hook.sh STANDS DOWN (uname is MINGW/MSYS/
+#   * native Windows + Git Bash   -> hook.sh STANDS DOWN (uname is MINGW/MSYS/
 #                                   CYGWIN) so this script owns Windows.
-#   • native Windows, no Git Bash → `sh` is not found (clean fail-open); this
+#   * native Windows, no Git Bash -> `sh` is not found (clean fail-open); this
 #                                   script runs.
 #
 # hooks.json loads this WITHOUT -File so the PowerShell ExecutionPolicy never
 # applies (running a scriptblock built from a string is not subject to policy,
-# unlike invoking a .ps1 on disk — this also survives a GPO-enforced policy,
+# unlike invoking a .ps1 on disk - this also survives a GPO-enforced policy,
 # which -ExecutionPolicy Bypass does not):
 #
 #   powershell -NoProfile -NonInteractive -Command \
 #     "& ([scriptblock]::Create((Get-Content -Raw -LiteralPath (Join-Path $env:CLAUDE_PLUGIN_ROOT 'scripts/hook.ps1')))) <Event>"
 #
 # CLAUDE_PLUGIN_ROOT is a process ENVIRONMENT VARIABLE, so PowerShell resolves
-# $env:CLAUDE_PLUGIN_ROOT at runtime via Join-Path — it must NOT be
+# $env:CLAUDE_PLUGIN_ROOT at runtime via Join-Path - it must NOT be
 # single-quoted (single quotes are literal in PowerShell and would never expand).
 #
 # This script mirrors hook.sh stage-for-stage: collect creds, resolve actor,
@@ -100,11 +100,11 @@ function ConvertFrom-ShellQuoted {
 
 function Repair-DoubleEncodedUtf8 {
     # Claude Code on non-UTF-8 Windows locales can double-encode assistant text
-    # (UTF-8 -> CP1252 -> UTF-8): e.g. "—" arrives as "â€"" and "'" as "â€™".
+    # (UTF-8 -> CP1252 -> UTF-8): e.g. "-" arrives as """ and "'" as "".
     # Re-encode as CP1252 and decode as UTF-8, with BOTH steps STRICT (throw on any
     # unmappable char / invalid byte). Genuine mojibake round-trips to valid UTF-8
-    # and is repaired; already-correct text (café, 😀, plain ASCII) fails the strict
-    # round-trip and is returned unchanged — a safe no-op for well-behaved clients.
+    # and is repaired; already-correct text (cafe, an emoji, plain ASCII) fails the strict
+    # round-trip and is returned unchanged - a safe no-op for well-behaved clients.
     param([string]$Text)
     if (-not $Text) { return $Text }
     try {
@@ -131,7 +131,7 @@ try {
         [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 } catch {}
 
-# ── stand down on non-Windows (pwsh on macOS/Linux) ────────────────────────
+# -- stand down on non-Windows (pwsh on macOS/Linux) ------------------------
 # $IsWindows exists only in PowerShell 6+. In 5.1 (Windows-only) it is $null, so
 # guard on the version to avoid a false stand-down there.
 if ($PSVersionTable.PSVersion.Major -ge 6 -and -not $IsWindows) { Write-Raw '{}'; exit 0 }
@@ -143,7 +143,7 @@ if (-not $env:CLAUDE_CODE_ENTRYPOINT) { Write-Raw '{}'; exit 0 }
 if (-not $EventName) { Dbg "no event name -> {}"; Write-Raw '{}'; exit 0 }
 Dbg "event=$EventName"
 
-# ── plugin root + logging ──────────────────────────────────────────────────
+# -- plugin root + logging --------------------------------------------------
 $pluginRoot = $env:CLAUDE_PLUGIN_ROOT
 if (-not $pluginRoot) { try { $pluginRoot = (Get-Location).Path } catch { $pluginRoot = '.' } }
 Dbg "pluginRoot=$pluginRoot"
@@ -161,7 +161,7 @@ function Log {
     } catch {}
 }
 
-# ── credential resolution (later file wins; process env wins over all) ─────
+# -- credential resolution (later file wins; process env wins over all) -----
 $creds = @{}
 $credFiles = @(
     (Join-Path $pluginRoot 'env'),
@@ -190,7 +190,7 @@ if (-not $apiKey) {
     Dbg "no API key after cred resolution -> fail-open"
     Log "outcome=unconfigured"
     if ($EventName -eq 'SessionStart') {
-        # Mirrors warn.sh's nudge (there is no warn.ps1 — this covers its job).
+        # Mirrors warn.sh's nudge (there is no warn.ps1 - this covers its job).
         Write-Raw '{"systemMessage": "[Rogue Security] Not configured. Run /rogue:setup to connect your API key."}'
     } else {
         Write-Raw '{}'
@@ -204,8 +204,8 @@ $baseUrl = $creds['ROGUE_BASE_URL']
 if (-not $baseUrl) { $baseUrl = 'https://api.rogue.security' }
 $baseUrl = $baseUrl.TrimEnd('/')
 
-# ── actor resolution: explicit creds → git config → CLAUDE_CODE_USER_EMAIL →
-#    username/hostname (mirrors actor.sh) ─────────────────────────────────────
+# -- actor resolution: explicit creds -> git config -> CLAUDE_CODE_USER_EMAIL ->
+#    username/hostname (mirrors actor.sh) -------------------------------------
 $actorName = $creds['ROGUE_ACTOR_NAME']
 if (-not $actorName) { try { $actorName = (& git config --global user.name 2>$null | Out-String).Trim() } catch {} }
 if (-not $actorName -and $env:CLAUDE_CODE_USER_EMAIL) { $actorName = ($env:CLAUDE_CODE_USER_EMAIL -split '@')[0] }
@@ -220,7 +220,7 @@ if (-not $actorEmail) {
     else { $actorEmail = $env:COMPUTERNAME }
 }
 
-# ── payload from stdin ─────────────────────────────────────────────────────
+# -- payload from stdin -----------------------------------------------------
 $payload = [Console]::In.ReadToEnd()
 if (-not $payload) { $payload = '{}' }
 # Claude Code sends a UTF-8 payload, but the console often reads stdin under a
@@ -235,7 +235,7 @@ try {
 $payload = $payload.TrimStart([char]0xFEFF)
 $payload = Repair-DoubleEncodedUtf8 $payload
 
-# ── POST (fail-open) ───────────────────────────────────────────────────────
+# -- POST (fail-open) -------------------------------------------------------
 $headers = @{
     'x-rogue-api-key'     = $apiKey
     'x-rogue-event'       = $EventName
@@ -270,7 +270,7 @@ try {
 $respHead = if ($resp.Length -gt 400) { $resp.Substring(0, 400) } else { $resp }
 Log "raw=$(Sanitize $respHead)"
 
-# ── block detection (mirrors hook.sh's pure-text scan) ─────────────────────
+# -- block detection (mirrors hook.sh's pure-text scan) ---------------------
 # Covers every block-decision shape Claude Code's hook protocol emits:
 #   "decision":"block"           UserPromptSubmit, Stop (top-level)
 #   "continue":false             legacy block signal
@@ -293,7 +293,7 @@ if ($resp -imatch $blockRe) {
             { $_ -in 'PreToolUse','PermissionRequest' } { $noun = 'tool call' }
             default                         { $noun = 'action' }
         }
-        $alertTitle = "⛔ Rogue blocked this $noun"
+        $alertTitle = "Rogue blocked this $noun"
         $alertMsg = "Why:`n$reason"
         if ($reason -notlike '*rgx!*') {
             $alertMsg += "`n`nTo allow it: prepend `"rgx!`" to your prompt and resend (marks it a false positive)."
@@ -309,7 +309,7 @@ if ($resp -imatch $blockRe) {
 # Relay the decision to Claude FIRST and flush it, BEFORE launching the modal, so
 # the block is delivered even if the modal lingers on screen. The modal runs in a
 # separate, non-blocking Start-Process (its own fds), so it can never hold Claude's
-# stdout open or delay the decision — the sibling hook.sh fix detaches the
+# stdout open or delay the decision - the sibling hook.sh fix detaches the
 # backgrounded alert's fds for the same reason.
 Emit-Json $resp
 

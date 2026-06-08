@@ -7,8 +7,8 @@
 # the next session.
 #
 # Opt-outs:
-#   ROGUE_AUTO_UPDATE=0       — disable entirely
-#   ROGUE_PLUGIN_VERSION=v1.x — pinned, never updates
+#   ROGUE_AUTO_UPDATE=0       - disable entirely
+#   ROGUE_PLUGIN_VERSION=v1.x - pinned, never updates
 #
 # Runs at most once per 24h (cached in %USERPROFILE%\.rogue\.auto-update-check).
 # Silent on every failure path. All activity logs to
@@ -38,7 +38,7 @@ function ReadEnvVar {
     param([string]$Key)
     $v = [Environment]::GetEnvironmentVariable($Key)
     if ($v) { return $v }
-    # Same precedence as the dispatcher (later wins): bundled plugin env → MDM →
+    # Same precedence as the dispatcher (later wins): bundled plugin env -> MDM ->
     # per-user. The bundled ${CLAUDE_PLUGIN_ROOT}\env is where compiled/managed
     # plugins pin flags like ROGUE_AUTO_UPDATE=0 / ROGUE_PLUGIN_VERSION.
     $files = @()

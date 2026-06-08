@@ -1,4 +1,4 @@
-# Rogue Security — credential storage helper (Windows / PowerShell).
+# Rogue Security - credential storage helper (Windows / PowerShell).
 # Mirrors setup.sh: writes %USERPROFILE%\.rogue-env, restricted to the current
 # user, in the same `export KEY=value` shell-quoted format both dispatchers read.
 #

@@ -10,7 +10,7 @@
 # or, when launched detached, via environment variables:
 #   ROGUE_ALERT_TITLE / ROGUE_ALERT_MSG / ROGUE_ALERT_SEVERITY
 #
-# Severity: critical (default) | warning | info — picks the icon.
+# Severity: critical (default) | warning | info - picks the icon.
 # Always exits 0; a UI failure must never propagate to the hook.
 
 param(

@@ -52,7 +52,7 @@ if (-not $env:CLAUDE_CODE_ENTRYPOINT) { exit 0 }
 $pluginRoot = $env:CLAUDE_PLUGIN_ROOT
 if (-not $pluginRoot) { try { $pluginRoot = (Get-Location).Path } catch { $pluginRoot = '.' } }
 
-# ── credential resolution ──────────────────────────────────────────────────
+# -- credential resolution --------------------------------------------------
 $creds = @{}
 foreach ($f in @((Join-Path $pluginRoot 'env'), 'C:\ProgramData\rogue\env', (Join-Path $env:USERPROFILE '.rogue-env'))) {
     if (-not $f -or -not (Test-Path -LiteralPath $f)) { continue }
@@ -72,7 +72,7 @@ if (-not $apiKey) { Dbg 'not configured -> no-op'; exit 0 }
 $baseUrl = $creds['ROGUE_BASE_URL']; if (-not $baseUrl) { $baseUrl = 'https://api.rogue.security' }
 $baseUrl = $baseUrl.TrimEnd('/')
 
-# ── actor resolution (mirrors actor.sh) ────────────────────────────────────
+# -- actor resolution (mirrors actor.sh) ------------------------------------
 $actorName = $creds['ROGUE_ACTOR_NAME']
 if (-not $actorName) { try { $actorName = (& git config --global user.name 2>$null | Out-String).Trim() } catch {} }
 if (-not $actorName -and $env:CLAUDE_CODE_USER_EMAIL) { $actorName = ($env:CLAUDE_CODE_USER_EMAIL -split '@')[0] }
@@ -86,7 +86,7 @@ if (-not $actorEmail) {
     elseif ($env:USERNAME) { $actorEmail = $env:USERNAME } else { $actorEmail = $env:COMPUTERNAME }
 }
 
-# ── plugin version (regex from manifest, no python) ────────────────────────
+# -- plugin version (regex from manifest, no python) ------------------------
 $ver = 'unknown'
 $pj = Join-Path $pluginRoot '.claude-plugin\plugin.json'
 if (Test-Path -LiteralPath $pj) {
@@ -94,7 +94,7 @@ if (Test-Path -LiteralPath $pj) {
     if ($m.Success) { $ver = $m.Groups[1].Value }
 }
 
-# ── agent display label from entrypoint (family is the fixed enum "claude") ─
+# -- agent display label from entrypoint (family is the fixed enum "claude") -
 $ep = ([string]$env:CLAUDE_CODE_ENTRYPOINT).ToLower()
 if ($ep -like '*cowork*')      { $agent = 'Claude Cowork' }
 elseif ($ep -like '*desktop*') { $agent = 'Claude Code - Desktop' }
