@@ -314,10 +314,16 @@ if ($resp -imatch $blockRe) {
 Emit-Json $resp
 
 if ($fireAlert) {
-    # Launch the modal detached (separate process, own handles). Pass title/msg via
-    # env vars so quoting/newlines can't break a -Command string. Load
-    # security-alert.ps1 via a scriptblock (no -File) so ExecutionPolicy/GPO never
-    # blocks it.
+    # Launch the modal detached (separate process, own handles) so the hook returns
+    # immediately. Title/msg/severity ride env vars (the child inherits them), so the
+    # launched command is constant.
+    #
+    # Pass it as a Base64 (UTF-16LE) -EncodedCommand, NOT -Command. Start-Process
+    # joins -ArgumentList with spaces and does NOT quote elements, so a -Command
+    # string containing spaces/quotes/parens (like the scriptblock bootstrap) reaches
+    # the child mangled and never runs (this is why the alert silently didn't show).
+    # A Base64 blob has no spaces, so it survives the array-join intact. EncodedCommand
+    # also sidesteps ExecutionPolicy/GPO (no -File on disk).
     try {
         $alert = Join-Path $pluginRoot 'scripts\security-alert.ps1'
         if (Test-Path -LiteralPath $alert) {
@@ -326,8 +332,9 @@ if ($fireAlert) {
             $env:ROGUE_ALERT_SEVERITY = 'critical'
             $alertEsc = $alert.Replace("'", "''")
             $boot = "& ([scriptblock]::Create((Get-Content -Raw -LiteralPath '$alertEsc')))"
+            $enc = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($boot))
             Start-Process -FilePath 'powershell' -WindowStyle Hidden -ArgumentList @(
-                '-NoProfile', '-NonInteractive', '-Command', $boot) | Out-Null
+                '-NoProfile', '-NonInteractive', '-EncodedCommand', $enc) | Out-Null
             Log "alert_launched=1 entrypoint=$($env:CLAUDE_CODE_ENTRYPOINT)"
         } else {
             Log "alert_skipped=missing_script"
