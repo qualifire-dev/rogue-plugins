@@ -7,6 +7,11 @@ etc.) for per-user identity provisioning.
 If you are an individual user installing for yourself, see the [README](../README.md)
 and run `/rogue:setup` instead — this guide doesn't apply.
 
+> **Want hands-off updates (no zip re-upload every release)?** Read
+> **[auto-update.md](auto-update.md)** first. This guide covers the static
+> compiled-zip deployment; the auto-update guides cover the private synced
+> marketplace (Desktop/Cowork) and the MDM CLI installer.
+
 ## Overview
 
 Two artifacts get deployed independently. Both must land for the plugin to
@@ -249,11 +254,22 @@ immediately afterward.
 
 ### Shipping plugin updates
 
-When new plugin behavior ships (e.g. new hook events, schema changes),
-recompile with `--from vX.Y.Z` to pin a specific release, then upload the
-new zip to the Claude management UI. The compiled bundle sets
-`ROGUE_AUTO_UPDATE=0` so user devices never auto-pull from GitHub — every
-update is admin-controlled.
+**Recommended: set up auto-updates** so you never hand-ship a new build. The
+mechanism differs by surface — see **[auto-update.md](auto-update.md)**:
+
+- **Claude Desktop / Cowork** → a private GitHub-synced org marketplace; updates
+  flow on merge, no zip re-upload. See
+  [desktop-cowork-auto-update.md](desktop-cowork-auto-update.md) and
+  `scripts/sync-org-marketplace.sh`.
+- **Claude Code CLI** → `scripts/mdm-install-cli.sh` installs from the live
+  marketplace with auto-update on; the key lives in `/etc/rogue/env`. See
+  [cli-mdm-auto-update.md](cli-mdm-auto-update.md).
+
+**Manual fallback (this guide's static zip):** recompile with `--from vX.Y.Z`
+and re-upload to the Claude management UI. The compiled bundle sets
+`ROGUE_AUTO_UPDATE=0`, so devices never auto-pull on their own — every update is
+an explicit admin re-upload. Use this only when you can't run either
+auto-update track.
 
 ### User reassignment / device transfer
 
@@ -303,9 +319,11 @@ overwrites `/etc/rogue/env` with the new identity. No manual cleanup.
   never over email, public Slack, or shared cloud folders. If you must
   store builds, encrypt at rest and gate access to the security team.
 
-- **Auto-update is disabled in compiled bundles.** Devices will not silently
-  pull new versions from GitHub on their own. This is intentional for
-  managed deployments: every upgrade is an explicit admin action.
+- **Auto-update is disabled in *compiled bundles*** (`ROGUE_AUTO_UPDATE=0`).
+  The static zip never pulls on its own. If you want hands-off updates, don't
+  use the static zip — use a private GitHub-synced org marketplace
+  (Desktop/Cowork) or the MDM CLI installer (CLI). See
+  [auto-update.md](auto-update.md).
 
 - **`rgx!` false-positive escape hatch is honored on all installs.** Users
   can prepend `rgx!` to any prompt to bypass a block. If you want this

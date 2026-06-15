@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "CHANGE-ME-org-security",
+  "description": "Internal Rogue Security AIDR distribution for <YOUR ORG>",
+  "owner": {
+    "name": "<YOUR ORG> Security Team",
+    "email": "security@your-org.example"
+  },
+  "plugins": [
+    {
+      "name": "rogue",
+      "description": "Rogue Security AIDR — real-time AI agent detection and response for Claude Code",
+      "category": "security",
+      "source": "./plugins/rogue"
+    }
+  ]
+}

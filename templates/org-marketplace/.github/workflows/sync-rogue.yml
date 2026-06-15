@@ -1,0 +1,70 @@
+# Auto-sync the Rogue AIDR plugin into this private org marketplace repo.
+#
+# Drop this file into YOUR private marketplace repo (the one you connected to
+# the claude.ai org dashboard as a GitHub-synced marketplace). On a schedule (or
+# manual run) it pulls the latest published Rogue plugin release, vendors it
+# under ./plugins/rogue/, re-bakes your org API key into plugins/rogue/env, and
+# commits to main. Because the claude.ai dashboard auto-syncs "whenever a PR is
+# merged to that repo", the commit propagates the new version to every org
+# member's Claude Desktop / Cowork on their next session — no zip re-upload.
+#
+# SETUP (one-time):
+#   1. Repo Settings → Secrets and variables → Actions:
+#        ROGUE_API_KEY  = your org rsk_... key
+#   2. (optional) Settings → Variables:
+#        ROGUE_MODE     = ask | block   (default: ask)
+#   3. Settings → Actions → General → Workflow permissions:
+#        "Read and write permissions" (so the job can push the commit).
+#
+# If your org requires PRs into main, change `push` below to open a PR with
+# peter-evans/create-pull-request instead, and merge it to trigger the sync.
+
+name: sync-rogue-plugin
+
+on:
+  schedule:
+    - cron: '0 7 * * *'   # daily 07:00 UTC — adjust to taste
+  workflow_dispatch: {}    # allow manual "Run workflow"
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout marketplace repo
+        uses: actions/checkout@v4
+
+      - name: Fetch sync script
+        run: |
+          curl -fsSL \
+            https://raw.githubusercontent.com/qualifire-dev/rogue-plugin-claude/main/scripts/sync-org-marketplace.sh \
+            -o /tmp/sync-org-marketplace.sh
+          chmod +x /tmp/sync-org-marketplace.sh
+
+      - name: Vendor latest Rogue plugin + bake key
+        env:
+          ROGUE_API_KEY: ${{ secrets.ROGUE_API_KEY }}
+          ROGUE_MODE: ${{ vars.ROGUE_MODE }}
+        run: |
+          /tmp/sync-org-marketplace.sh \
+            --repo-dir "$GITHUB_WORKSPACE" \
+            --key "$ROGUE_API_KEY" \
+            --mode "${ROGUE_MODE:-ask}"
+
+      - name: Commit + push if changed
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.name  "rogue-sync[bot]"
+            git config user.email "rogue-sync@users.noreply.github.com"
+            git add -A
+            ver=$(grep -oE '"version"[[:space:]]*:[[:space:]]*"[0-9][^"]*"' \
+                    plugins/rogue/.claude-plugin/plugin.json | head -1 \
+                    | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+            git commit -m "chore: sync Rogue AIDR plugin to v${ver}"
+            git push
+          else
+            echo "Already up to date — nothing to commit."
+          fi

@@ -14,7 +14,9 @@ There is no build step for the plugin itself: it's a directory of JSON + shell s
 - `plugins/rogue/.claude-plugin/plugin.json` — plugin manifest. **`version` here is the source of truth** — `build-release.sh` reads it, and `auto-update.sh` compares it against the latest GitHub release tag (`v${version}`).
 - `plugins/rogue/hooks/hooks.json` — 12 lifecycle hooks, all `type: "command"`, all running inline bash. **Every hook follows the same shape** (see below).
 - `plugins/rogue/scripts/setup.sh` — writes `~/.rogue-env` (mode 600) with `ROGUE_API_KEY` / `ROGUE_ACTOR_EMAIL` / `ROGUE_ACTOR_NAME`. Called by `/rogue:setup`.
-- `plugins/rogue/scripts/auto-update.sh` — fires from `SessionStart` in the background. Rate-limited to once/24h via `~/.rogue/.auto-update-check`. Logs to `~/.rogue/auto-update.log`. Re-invokes the one-line installer when a newer release tag exists.
+- `plugins/rogue/scripts/auto-update.sh` — fires from `SessionStart` in the background (CLI only). Rate-limited to once/24h via `~/.rogue/.auto-update-check`. Logs to `~/.rogue/auto-update.log`. When a newer release tag exists it runs the **native** update commands (`claude plugin marketplace update rogue-marketplace` + `claude plugin update rogue`) — NOT a re-run of `install.sh` (the old behavior). Stands down on `ROGUE_AUTO_UPDATE=0` / `ROGUE_PLUGIN_VERSION` / no `claude` on PATH. Why native commands not session-start auto-pull: third-party marketplaces don't auto-pull (anthropics/claude-code#26744) and managed `autoUpdate` is unshipped (#51350).
+- `scripts/mdm-install-cli.sh` (+ `.ps1`) — **MDM installer for CLI fleets** (the auto-updating alternative to the frozen zip). Writes `/etc/rogue/env` (key+actor, outside the plugin dir so updates don't clobber it), does a live public-marketplace install with auto-update left ON, and drops a `managed-settings.d/30-rogue.json` fragment (`extraKnownMarketplaces` + `enabledPlugins`).
+- `scripts/sync-org-marketplace.sh` + `templates/org-marketplace/` — **Desktop/Cowork auto-update**. Vendors the latest released plugin into a customer's PRIVATE GitHub-synced marketplace repo (relative-path source), bakes the org key into `plugins/rogue/env` (`ROGUE_AUTO_UPDATE=0` — platform owns updates here; Cowork doesn't fire SessionStart hooks per #47993), strips Cowork-unsupported hook events. The claude.ai dashboard auto-syncs on PR merge. Template ships a daily `sync-rogue.yml` Action. See `docs/auto-update.md`.
 - `plugins/rogue/scripts/security-alert.sh` — cross-platform modal alert (osascript on macOS, notify-send on Linux). Used by `UserPromptSubmit` when the API returns `decision: "block"`.
 - `plugins/rogue/commands/{setup,status}.md` — slash commands. These are **instructions to Claude**, not scripts — Claude executes the bash inside them step-by-step.
 - `scripts/build-release.sh` + `.github/workflows/release.yml` — tag-driven release pipeline. Pushing a `v*` tag builds `dist/rogue-plugin-claude-darwin.tar.gz` and attaches it to the release. The artifact filename intentionally has **no version** so `/latest/` URLs stay stable.
@@ -46,7 +48,10 @@ Invariants to preserve when editing hooks:
 
 1. Bump `version` in **both** `plugins/rogue/.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` (the marketplace lists the plugin's version too — keep them in sync).
 2. Commit, tag `vX.Y.Z`, push the tag. The `release.yml` workflow checks out the tag, runs `scripts/build-release.sh`, and creates the GitHub Release with the tarball.
-3. `auto-update.sh` on user machines will pick up the new release on the next `SessionStart` (rate-limited 24h).
+3. Propagation to managed fleets (see `docs/auto-update.md`):
+   - **CLI / public-marketplace** installs: `auto-update.sh` picks it up on the next `SessionStart` (rate-limited 24h) via `claude plugin update`.
+   - **Desktop / Cowork** orgs: their `sync-rogue.yml` Action (or a manual `scripts/sync-org-marketplace.sh`) vendors the new release into their private synced marketplace repo; the claude.ai dashboard syncs it on merge.
+   - **Static compiled zips** (`ROGUE_AUTO_UPDATE=0`): no auto-update — admin rebuilds + re-uploads.
 
 ## Things that look weird but are intentional
 

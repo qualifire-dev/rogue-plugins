@@ -1,0 +1,5 @@
+# The vendored Rogue plugin is written to ./plugins/rogue/ by
+# scripts/sync-org-marketplace.sh (or the GitHub Action). Do not hand-edit the
+# vendored tree — your edits would be overwritten on the next sync. Customize
+# the API key + enforcement mode through plugins/rogue/env after the first sync
+# (see this template's README.md).

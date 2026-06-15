@@ -6,6 +6,15 @@
 # plugin root, sourced by every hook before the standard locations
 # (/etc/rogue/env and ~/.rogue-env, which still override if present).
 #
+# WHICH UPDATE PATH IS THIS FOR? This frozen zip (ROGUE_AUTO_UPDATE=0) is the
+# manual / one-shot artifact. For an AUTO-UPDATING managed deployment prefer:
+#   • Desktop / Cowork → seed a PRIVATE GitHub-synced org marketplace with
+#       scripts/sync-org-marketplace.sh and connect it in the claude.ai
+#       dashboard. Updates flow on merge — no zip re-upload. (docs/auto-update.md)
+#   • Claude Code CLI → scripts/mdm-install-cli.sh installs from the live public
+#       marketplace with auto-update ON, key in /etc/rogue/env.
+# Use THIS script only when you genuinely need a static drag-drop bundle.
+#
 # Actor identity (email/name) is intentionally NOT compiled in. It is
 # derived per-user at hook-fire time from git config / $USER on the
 # end-user's machine. Per-user ~/.rogue-env overrides still win.
@@ -258,6 +267,10 @@ OK  wrote $OUT  (${SIZE} bytes)
 
 !!  This zip embeds ROGUE_API_KEY in plaintext. Distribute over trusted
     channels only. To rotate: revoke the key in the dashboard and rebuild.
+
+i   This bundle does NOT auto-update (ROGUE_AUTO_UPDATE=0). For hands-off
+    updates use a private GitHub-synced org marketplace instead — see
+    docs/auto-update.md and scripts/sync-org-marketplace.sh.
 
 Customer install (drag-and-drop):
   1. In Claude Code's plugins UI, drag and drop this zip.
