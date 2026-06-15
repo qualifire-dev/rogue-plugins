@@ -10,6 +10,8 @@ source credentials from three locations in order (later wins): the plugin's bund
 (per-user setup). This command checks all three so it works for managed, MDM, and
 individual deployments.
 
+**Pick the command variant for the user's OS.** The steps below use **macOS / Linux (bash)** commands. On **native Windows (no WSL)**, use the PowerShell equivalents in the "Windows (PowerShell)" block at the end of this command instead — the credential files there are `C:\ProgramData\rogue\env` (MDM) and `%USERPROFILE%\.rogue-env` (per-user), and the plugin bundle `env` lives under `$env:USERPROFILE\.claude\plugins`.
+
 ## Step 1: Write a credential-source helper and report what's found
 
 Each Bash invocation runs in its own subshell, so steps re-source the chain via a
@@ -139,3 +141,39 @@ After the summary, tell the user:
 > resubmit. Rogue will allow that one prompt and mark the previous detection as
 > a false positive in your dashboard. The override is per-prompt only —
 > subsequent prompts go through normal evaluation.
+
+## Windows (PowerShell)
+
+On native Windows (no WSL), run this single block instead of Steps 1–4. It
+resolves credentials (later source wins), reports what was found, registers the
+heartbeat, and prints the resolved identity:
+
+```powershell
+$creds = @{}
+$pluginEnv = Get-ChildItem "$env:USERPROFILE\.claude\plugins" -Recurse -Filter env -File -ErrorAction SilentlyContinue |
+  Where-Object { $_.FullName -like '*rogue*' } | Select-Object -First 1
+foreach ($f in @($pluginEnv.FullName, 'C:\ProgramData\rogue\env', "$env:USERPROFILE\.rogue-env")) {
+  if (-not $f -or -not (Test-Path -LiteralPath $f)) { continue }
+  Write-Host "  $f"
+  foreach ($line in (Get-Content -LiteralPath $f)) {
+    if ($line -match '^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)=(.+)$') {
+      $creds[$Matches[1]] = $Matches[2].Trim() -replace "^'(.*)'$",'$1' -replace '^"(.*)"$','$1'
+    }
+  }
+}
+$key = $creds['ROGUE_API_KEY']
+if (-not $key) { 'API key: not resolved — run /rogue:setup'; return }
+'API key resolved: ...' + $key.Substring([Math]::Max(0,$key.Length-4))
+$base = if ($creds['ROGUE_BASE_URL']) { $creds['ROGUE_BASE_URL'].TrimEnd('/') } else { 'https://api.rogue.security' }
+$body = @{ agent_family='claude'; agent='Claude Code - CLI'; host=$env:COMPUTERNAME; actor_email=[string]$creds['ROGUE_ACTOR_EMAIL'] } | ConvertTo-Json -Compress
+try {
+  $r = Invoke-WebRequest -Uri "$base/api/v1/hooks/status" -Method Post -Headers @{ 'x-rogue-api-key'=$key } -ContentType 'application/json' -Body ([Text.Encoding]::UTF8.GetBytes($body)) -UseBasicParsing -TimeoutSec 10
+  "Connected (HTTP $($r.StatusCode)): $($r.Content)"
+} catch { "Status check failed: $($_.Exception.Message)" }
+"Actor email: $($creds['ROGUE_ACTOR_EMAIL'])"
+"Actor name:  $($creds['ROGUE_ACTOR_NAME'])"
+```
+
+Interpret the JSON response and report the same fields as Step 2 (connected,
+organization, version/update_available). HTTP 401 → key invalid; no response →
+check network reachability to `api.rogue.security`.

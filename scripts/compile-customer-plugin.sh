@@ -26,7 +26,7 @@
 #   --repo OWNER/REPO  Source repo (default: qualifire-dev/rogue-plugin-claude)
 #
 # Output: a flat zip whose root contains .claude-plugin/, hooks/, scripts/,
-# commands/, and env. Drag-drop or extract into ~/.claude/plugins/<name>/.
+# skills/, and env. Drag-drop or extract into ~/.claude/plugins/<name>/.
 
 set -euo pipefail
 
@@ -91,7 +91,7 @@ if [ -z "$FROM" ]; then
 fi
 echo "-> using release: $FROM"
 
-TARBALL_URL="https://github.com/${REPO}/releases/download/${FROM}/rogue-plugin-claude-darwin.tar.gz"
+TARBALL_URL="https://github.com/${REPO}/releases/download/${FROM}/rogue-plugin-claude.tar.gz"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -263,7 +263,7 @@ Customer install (drag-and-drop):
   1. In Claude Code's plugins UI, drag and drop this zip.
   2. Restart Claude Code. Run /rogue:status to verify the bundled key works.
 
-  Zip layout is flat — .claude-plugin/, hooks/, scripts/, commands/, and the
+  Zip layout is flat — .claude-plugin/, hooks/, scripts/, skills/, and the
   compiled env sit at the zip root, no wrapper directory.
 
 EOF

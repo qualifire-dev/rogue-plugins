@@ -15,6 +15,11 @@
 
 [ -z "${CLAUDE_CODE_ENTRYPOINT:-}" ] && exit 0
 
+# Git Bash stand-down: auto-update.ps1 owns native Windows (same reason as hook.sh).
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*) exit 0 ;;
+esac
+
 set -u
 
 LOG="$HOME/.rogue/auto-update.log"
@@ -22,7 +27,11 @@ mkdir -p "$(dirname "$LOG")" 2>/dev/null || exit 0
 exec >>"$LOG" 2>&1
 date "+%F %T --- auto-update tick ---"
 
-# Pull creds + flags from the same files the hooks read.
+# Pull creds + flags from the same files the hooks read, in the same precedence
+# order (later wins): bundled plugin env → MDM → per-user. The bundled
+# ${CLAUDE_PLUGIN_ROOT}/env is where compiled/managed plugins pin flags like
+# ROGUE_AUTO_UPDATE=0 or ROGUE_PLUGIN_VERSION, so it must be sourced here too.
+[ -r "${CLAUDE_PLUGIN_ROOT:-}/env" ] && . "${CLAUDE_PLUGIN_ROOT}/env"
 [ -r /etc/rogue/env ] && . /etc/rogue/env
 [ -r "$HOME/.rogue-env" ] && . "$HOME/.rogue-env"
 
@@ -55,7 +64,11 @@ if [ ! -f "$PLUGIN_JSON" ]; then
   echo "no plugin.json at $PLUGIN_JSON"
   exit 0
 fi
-INSTALLED=$(python3 -c 'import json,sys;print(json.load(sys.stdin).get("version",""))' < "$PLUGIN_JSON" 2>/dev/null || echo "")
+# Read the version WITHOUT python3 — the /usr/bin/python3 stub fails silently on
+# a fresh macOS (no Xcode CLT), which would mask updates. grep/sed are always
+# present (same approach as heartbeat.sh / build-release.sh).
+INSTALLED=$(grep -oE '"version"[[:space:]]*:[[:space:]]*"[0-9][^"]*"' "$PLUGIN_JSON" 2>/dev/null \
+  | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
 if [ -z "$INSTALLED" ]; then
   echo "no installed version found"
   exit 0
@@ -63,7 +76,8 @@ fi
 INSTALLED_TAG="v${INSTALLED}"
 
 LATEST=$(curl -fsSL --max-time 5 "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null \
-  | python3 -c 'import json,sys;d=json.loads(sys.stdin.read() or "{}");print(d.get("tag_name") or "")' 2>/dev/null || echo "")
+  | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 \
+  | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/')
 if [ -z "$LATEST" ]; then
   echo "could not resolve latest release"
   exit 0
