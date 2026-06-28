@@ -1,0 +1,149 @@
+# Rogue Security AIDR — one-liner multi-agent installer (Windows / PowerShell).
+#
+#   irm https://raw.githubusercontent.com/qualifire-dev/rogue-plugin-claude/main/install-all.ps1 | iex
+#
+# Windows sibling of install-all.sh. Detects supported coding agents, collects +
+# validates credentials ONCE into the shared %USERPROFILE%\.rogue-env, then runs
+# each per-agent install non-interactively. Fail-soft per agent.
+#
+# Params can be passed when invoked as a file; for `irm | iex` set $env:ROGUE_* first.
+param(
+    [string]$Only = '',
+    [string]$Skip = '',
+    [switch]$List,
+    [switch]$DryRun,
+    [switch]$Force,
+    [switch]$NonInteractive,
+    [string]$ApiKey   = $env:ROGUE_API_KEY,
+    [string]$ActorEmail = $env:ROGUE_ACTOR_EMAIL,
+    [string]$ActorName  = $env:ROGUE_ACTOR_NAME,
+    [string]$BaseUrl  = $(if ($env:ROGUE_BASE_URL) { $env:ROGUE_BASE_URL } else { 'https://api.rogue.security' })
+)
+
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+try {
+    [Net.ServicePointManager]::SecurityProtocol = `
+        [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+} catch {}
+
+$Repo    = if ($env:ROGUE_REPO) { $env:ROGUE_REPO } else { 'qualifire-dev/rogue-plugin-claude' }
+$EnvFile = if ($env:ROGUE_ENV_FILE) { $env:ROGUE_ENV_FILE } else { Join-Path $env:USERPROFILE '.rogue-env' }
+$CursorInstaller = if ($env:ROGUE_CURSOR_INSTALLER_PS1) { $env:ROGUE_CURSOR_INSTALLER_PS1 } else { 'https://raw.githubusercontent.com/qualifire-dev/rogue-plugin-cursor/main/install.ps1' }
+
+function Say { param([string]$M) Write-Host $M }
+function InCsv { param([string]$Csv,[string]$Id) return (",$Csv," -like "*,$Id,*") }
+
+# ── providers / detection ──────────────────────────────────────────────────
+$providers = @(
+    @{ id='claude'; label='Claude Code'; detect={ [bool](Get-Command claude -ErrorAction SilentlyContinue) } },
+    @{ id='codex';  label='OpenAI Codex'; detect={ [bool](Get-Command codex -ErrorAction SilentlyContinue) } },
+    @{ id='cursor'; label='Cursor'; detect={ [bool](Get-Command cursor -ErrorAction SilentlyContinue) -or (Test-Path (Join-Path $env:USERPROFILE '.cursor')) -or (Test-Path (Join-Path $env:LOCALAPPDATA 'Programs\cursor')) } }
+)
+
+function Selected { param([string]$Id)
+    if ($Only -and -not (InCsv $Only $Id)) { return $false }
+    if ($Skip -and (InCsv $Skip $Id)) { return $false }
+    return $true
+}
+
+Say "Rogue AIDR — detecting coding agents:"
+$active = @()
+foreach ($p in $providers) {
+    $d = & $p.detect
+    $mark = if ($d) { '✓' } else { '—' }
+    $note = if ($d -and (Selected $p.id)) { ' (will install)' } else { '' }
+    Say ("  {0} {1,-14} {2}{3}" -f $mark, $p.label, $(if($d){'yes'}else{'no'}), $note)
+    if ($d -and (Selected $p.id)) { $active += $p.id }
+}
+
+if ($List) { return }
+if (-not $active) { Say 'No supported agents selected. Nothing to do.'; return }
+
+# ── credentials (collect ONCE) ─────────────────────────────────────────────
+function ConvertFrom-ShellQuoted { param([string]$Val)
+    if ($null -eq $Val) { return $Val }
+    $Val = $Val.Trim()
+    if ($Val.StartsWith("'") -and $Val.EndsWith("'")) { return $Val.Substring(1, $Val.Length-2).Replace("'\''","'") }
+    return $Val
+}
+if (-not $ApiKey -and (Test-Path -LiteralPath $EnvFile)) {
+    foreach ($line in (Get-Content -LiteralPath $EnvFile)) {
+        if ($line -match '^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)=(.+)$') {
+            $k = $Matches[1]; $v = ConvertFrom-ShellQuoted $Matches[2]
+            switch ($k) {
+                'ROGUE_API_KEY'     { if (-not $ApiKey) { $ApiKey = $v } }
+                'ROGUE_ACTOR_EMAIL' { if (-not $ActorEmail) { $ActorEmail = $v } }
+                'ROGUE_ACTOR_NAME'  { if (-not $ActorName) { $ActorName = $v } }
+            }
+        }
+    }
+}
+if (-not $ActorEmail) { try { $ActorEmail = (& git config --global user.email 2>$null | Out-String).Trim() } catch {} }
+if (-not $ActorName)  { try { $ActorName  = (& git config --global user.name  2>$null | Out-String).Trim() } catch {} }
+
+if (-not $ApiKey) {
+    if ($NonInteractive) { Say '✗ No API key (set $env:ROGUE_API_KEY or -ApiKey). Aborting.'; exit 1 }
+    $sec = Read-Host -AsSecureString 'Rogue API key (rsk_...)'
+    $ApiKey = [System.Net.NetworkCredential]::new('', $sec).Password
+}
+
+if (-not $DryRun) {
+    try {
+        $r = Invoke-WebRequest -Uri "$($BaseUrl.TrimEnd('/'))/api/v1/hooks/ping" -Headers @{ 'x-rogue-api-key' = $ApiKey } `
+            -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+        if ($r.StatusCode -ne 200) { throw "HTTP $($r.StatusCode)" }
+        Say '✓ API key valid'
+    } catch { Say "✗ API key validation failed: $($_.Exception.Message)"; exit 1 }
+}
+
+function Format-EnvVal { param([string]$Val) return "'" + ([string]$Val).Replace("'", "'\''") + "'" }
+function Write-EnvFile {
+    $surface = if ($env:ROGUE_CODEX_SURFACE) { $env:ROGUE_CODEX_SURFACE } else { 'codex_cli' }
+    $lines = @(
+        '# Managed by the rogue multi-agent installer. Read by hook subprocesses at runtime.',
+        '# Delete this file to revoke credentials.',
+        "export ROGUE_API_KEY=$(Format-EnvVal $ApiKey)",
+        "export ROGUE_ACTOR_EMAIL=$(Format-EnvVal $ActorEmail)",
+        "export ROGUE_ACTOR_NAME=$(Format-EnvVal $ActorName)",
+        "export ROGUE_CODEX_SURFACE=$(Format-EnvVal $surface)"
+    )
+    if ($BaseUrl -ne 'https://api.rogue.security') { $lines += "export ROGUE_BASE_URL=$(Format-EnvVal $BaseUrl)" }
+    Set-Content -Path $EnvFile -Value $lines -Encoding UTF8
+    try {
+        $acl = Get-Acl $EnvFile
+        $acl.SetAccessRuleProtection($true, $false)
+        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+            [System.Security.Principal.WindowsIdentity]::GetCurrent().Name, 'FullControl', 'Allow')
+        $acl.SetAccessRule($rule); Set-Acl $EnvFile $acl
+    } catch {}
+}
+if ($DryRun) { Say "  [dry-run] write $EnvFile" } else { Write-EnvFile; Say "✓ wrote $EnvFile" }
+
+# ── per-agent install (fail-soft) ──────────────────────────────────────────
+function Run { param([string]$Cmd) if ($DryRun) { Say "  [dry-run] $Cmd" } else { Invoke-Expression $Cmd } }
+
+$rc = 0
+Say ''
+Say ("Installing into: " + ($active -join ', '))
+foreach ($id in $active) {
+    Say "-> $id"
+    try {
+        switch ($id) {
+            'claude' {
+                Run "claude plugin marketplace add $Repo 2>`$null; claude plugin install rogue@rogue-marketplace"
+            }
+            'codex' {
+                Run "codex plugin marketplace add $Repo 2>`$null; codex plugin install rogue@rogue-marketplace"
+                Say "  ! Codex skips untrusted hooks - open /hooks in Codex and trust the Rogue entries once."
+            }
+            'cursor' {
+                Run "`$env:ROGUE_NON_INTERACTIVE='1'; iex (irm '$CursorInstaller')"
+            }
+        }
+    } catch { Say "  x $id failed: $($_.Exception.Message)"; $rc = 1 }
+}
+
+Say ''
+if ($rc -eq 0) { Say '✓ Done. Restart each agent to load the plugin.' } else { Say '! Done with some failures - see above.' }
+exit $rc

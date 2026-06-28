@@ -56,6 +56,29 @@ for OS in $OS_MATRIX; do
   trap - EXIT
 done
 
+# ── Codex plugin tarball ────────────────────────────────────────────────────
+# Primary Codex install path is `codex plugin marketplace add <repo>` (git), but
+# we also ship a versionless tarball so /releases/latest/download URLs are stable
+# (used by compiled-key MDM bundles and any download-based install).
+if [ -d "plugins/codex" ]; then
+  CODEX_VERSION=$(python3 -c "import json; print(json.load(open('plugins/codex/.codex-plugin/plugin.json'))['version'])" 2>/dev/null || echo "unknown")
+  echo "→ codex plugin version: $CODEX_VERSION"
+  for OS in $OS_MATRIX; do
+    STAGE=$(mktemp -d)
+    trap 'rm -rf "$STAGE"' EXIT
+    TOPDIR="$STAGE/rogue-plugin-codex"
+    mkdir -p "$TOPDIR/plugins" "$TOPDIR/.agents/plugins"
+    cp .agents/plugins/marketplace.json "$TOPDIR/.agents/plugins/"
+    cp -R plugins/codex "$TOPDIR/plugins/"
+    cp README.md LICENSE "$TOPDIR/" 2>/dev/null || true
+    OUT="$DIST/rogue-plugin-codex-${OS}.tar.gz"
+    tar -czf "$OUT" -C "$STAGE" "rogue-plugin-codex"
+    SIZE=$(wc -c < "$OUT" | awk '{print $1}')
+    echo "✓ $OUT  ($SIZE bytes, version $CODEX_VERSION)"
+    rm -rf "$STAGE"; trap - EXIT
+  done
+fi
+
 echo ""
 echo "dist/:"
 ls -la "$DIST"
