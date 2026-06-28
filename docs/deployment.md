@@ -324,9 +324,14 @@ overwrites `/etc/rogue/env` with the new identity. No manual cleanup.
   the public marketplace should follow the [README](../README.md) and run
   `/rogue:setup`.
 
-- **Windows.** The plugin's modal alert relies on macOS-specific
-  `osascript`. Linux works for everything except the alert (silent fail
-  via the elif fall-through). Windows is not currently supported.
+- **Windows.** Natively supported (no WSL or Git Bash required). Each hook
+  ships a PowerShell sibling (`hook.ps1`, `heartbeat.ps1`, `auto-update.ps1`,
+  `setup.ps1`, `security-alert.ps1`) alongside the POSIX `sh` scripts, and
+  exactly one runs per machine. Install with the PowerShell one-liner
+  (`iwr -useb .../install.ps1 | iex`). Credentials live at
+  `%USERPROFILE%\.rogue-env` (per-user) or `C:\ProgramData\rogue\env` (MDM);
+  the block modal uses `System.Windows.Forms.MessageBox`. On Linux the modal
+  uses `notify-send` (silent fall-through if absent); everything else works.
 
 ---
 

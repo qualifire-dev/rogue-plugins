@@ -6,8 +6,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "( nohup bash \"${CLAUDE_PLUGIN_ROOT}/scripts/auto-update.sh\" >/dev/null 2>&1 & )",
-            "timeout": 2
+            "command": "( nohup sh \"${CLAUDE_PLUGIN_ROOT}/scripts/auto-update.sh\" >/dev/null 2>&1 & )",
+            "timeout": 20
+          },
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -NonInteractive -Command \"Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile','-NonInteractive','-Command','& ([scriptblock]::Create((Get-Content -Raw -LiteralPath (Join-Path $env:CLAUDE_PLUGIN_ROOT ''scripts/auto-update.ps1''))))'\"",
+            "timeout": 20
           }
         ]
       },
@@ -16,8 +21,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "( nohup bash \"${CLAUDE_PLUGIN_ROOT}/scripts/heartbeat.sh\" >/dev/null 2>&1 & )",
-            "timeout": 2
+            "command": "( nohup sh \"${CLAUDE_PLUGIN_ROOT}/scripts/heartbeat.sh\" >/dev/null 2>&1 & )",
+            "timeout": 20
+          },
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -NonInteractive -Command \"Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile','-NonInteractive','-Command','& ([scriptblock]::Create((Get-Content -Raw -LiteralPath (Join-Path $env:CLAUDE_PLUGIN_ROOT ''scripts/heartbeat.ps1''))))'\"",
+            "timeout": 20
           }
         ]
       },
@@ -26,8 +36,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/warn.sh\" || true",
-            "timeout": 2
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/warn.sh\" || true",
+            "timeout": 20
           }
         ]
       },
@@ -36,8 +46,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" SessionStart || echo '{}'",
-            "timeout": 12
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" SessionStart || echo '{}'",
+            "timeout": 20
+          },
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -NonInteractive -Command \"& ([scriptblock]::Create((Get-Content -Raw -LiteralPath (Join-Path $env:CLAUDE_PLUGIN_ROOT 'scripts/hook.ps1')))) SessionStart\"",
+            "timeout": 20
           }
         ]
       }
@@ -48,8 +63,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" UserPromptSubmit || echo '{}'",
-            "timeout": 7
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" UserPromptSubmit || echo '{}'",
+            "timeout": 20
+          },
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -NonInteractive -Command \"& ([scriptblock]::Create((Get-Content -Raw -LiteralPath (Join-Path $env:CLAUDE_PLUGIN_ROOT 'scripts/hook.ps1')))) UserPromptSubmit\"",
+            "timeout": 20
           }
         ]
       }
@@ -60,8 +80,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" PreToolUse || echo '{}'",
-            "timeout": 12
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" PreToolUse || echo '{}'",
+            "timeout": 20
+          },
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -NonInteractive -Command \"& ([scriptblock]::Create((Get-Content -Raw -LiteralPath (Join-Path $env:CLAUDE_PLUGIN_ROOT 'scripts/hook.ps1')))) PreToolUse\"",
+            "timeout": 20
           }
         ]
       }
@@ -72,8 +97,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" PostToolUse || echo '{}'",
-            "timeout": 12
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" PostToolUse || echo '{}'",
+            "timeout": 20
+          },
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -NonInteractive -Command \"& ([scriptblock]::Create((Get-Content -Raw -LiteralPath (Join-Path $env:CLAUDE_PLUGIN_ROOT 'scripts/hook.ps1')))) PostToolUse\"",
+            "timeout": 20
           }
         ]
       }
@@ -84,8 +114,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" PostToolUseFailure || echo '{}'",
-            "timeout": 12
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" PostToolUseFailure || echo '{}'",
+            "timeout": 20
+          },
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -NonInteractive -Command \"& ([scriptblock]::Create((Get-Content -Raw -LiteralPath (Join-Path $env:CLAUDE_PLUGIN_ROOT 'scripts/hook.ps1')))) PostToolUseFailure\"",
+            "timeout": 20
           }
         ]
       }
@@ -96,8 +131,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" PermissionRequest || echo '{}'",
-            "timeout": 12
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" PermissionRequest || echo '{}'",
+            "timeout": 20
+          },
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -NonInteractive -Command \"& ([scriptblock]::Create((Get-Content -Raw -LiteralPath (Join-Path $env:CLAUDE_PLUGIN_ROOT 'scripts/hook.ps1')))) PermissionRequest\"",
+            "timeout": 20
           }
         ]
       }
@@ -108,8 +148,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" Stop || echo '{}'",
-            "timeout": 12
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" Stop || echo '{}'",
+            "timeout": 20
+          },
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -NonInteractive -Command \"& ([scriptblock]::Create((Get-Content -Raw -LiteralPath (Join-Path $env:CLAUDE_PLUGIN_ROOT 'scripts/hook.ps1')))) Stop\"",
+            "timeout": 20
           }
         ]
       }
@@ -120,8 +165,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" SessionEnd || echo '{}'",
-            "timeout": 12
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" SessionEnd || echo '{}'",
+            "timeout": 20
+          },
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -NonInteractive -Command \"& ([scriptblock]::Create((Get-Content -Raw -LiteralPath (Join-Path $env:CLAUDE_PLUGIN_ROOT 'scripts/hook.ps1')))) SessionEnd\"",
+            "timeout": 20
           }
         ]
       }
@@ -132,8 +182,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" SubagentStart || echo '{}'",
-            "timeout": 12
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" SubagentStart || echo '{}'",
+            "timeout": 20
+          },
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -NonInteractive -Command \"& ([scriptblock]::Create((Get-Content -Raw -LiteralPath (Join-Path $env:CLAUDE_PLUGIN_ROOT 'scripts/hook.ps1')))) SubagentStart\"",
+            "timeout": 20
           }
         ]
       }
@@ -144,20 +199,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" SubagentStop || echo '{}'",
-            "timeout": 12
-          }
-        ]
-      }
-    ],
-    "InstructionsLoaded": [
-      {
-        "matcher": "",
-        "hooks": [
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" SubagentStop || echo '{}'",
+            "timeout": 20
+          },
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" InstructionsLoaded || echo '{}'",
-            "timeout": 12
+            "command": "powershell -NoProfile -NonInteractive -Command \"& ([scriptblock]::Create((Get-Content -Raw -LiteralPath (Join-Path $env:CLAUDE_PLUGIN_ROOT 'scripts/hook.ps1')))) SubagentStop\"",
+            "timeout": 20
           }
         ]
       }
@@ -168,8 +216,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" ConfigChange || echo '{}'",
-            "timeout": 12
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" ConfigChange || echo '{}'",
+            "timeout": 20
+          },
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -NonInteractive -Command \"& ([scriptblock]::Create((Get-Content -Raw -LiteralPath (Join-Path $env:CLAUDE_PLUGIN_ROOT 'scripts/hook.ps1')))) ConfigChange\"",
+            "timeout": 20
           }
         ]
       }

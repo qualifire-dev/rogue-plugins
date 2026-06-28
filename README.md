@@ -9,14 +9,32 @@ reach production.
 
 One-line installer (recommended):
 
+**macOS / Linux:**
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/qualifire-dev/rogue-plugin-claude/main/install.sh | bash
 ```
 
+**Windows** (PowerShell 5.1+, run as your normal user):
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/qualifire-dev/rogue-plugin-claude/main/install.ps1 | iex
+```
+
+Pass credentials via environment variables before the one-liner when running non-interactively:
+
+```powershell
+$env:ROGUE_API_KEY='rsk_xxx'; $env:ROGUE_ACTOR_EMAIL='you@co.com'; iwr -useb https://raw.githubusercontent.com/qualifire-dev/rogue-plugin-claude/main/install.ps1 | iex
+```
+
 The installer adds the marketplace and installs the plugin via the Claude CLI
 (`claude plugin marketplace add` + `claude plugin install`), validates and writes
-your API key to `~/.rogue-env`, confirms your actor identity, and configures a
-`Rogue Security` status badge below the prompt (🟢 connected / 🔴 not set up).
+your API key to `~/.rogue-env` (`%USERPROFILE%\.rogue-env` on Windows), and
+confirms your actor identity. On macOS/Linux it also configures a `Rogue Security`
+status badge below the prompt (🟢 connected / 🔴 not set up).
+
+Native Windows support requires no WSL or Git Bash: every hook ships both a POSIX
+`sh` script and a PowerShell sibling, and exactly one runs per machine.
 
 Manual install (inside Claude Code v2.1+):
 
@@ -32,21 +50,28 @@ Get an API key at <https://app.rogue.security/settings/api-keys>.
 
 ```
 .claude-plugin/plugin.json   — plugin manifest
-hooks/hooks.json             — 12 command-based lifecycle hooks
-commands/setup.md            — /rogue:setup slash command
-commands/status.md           — /rogue:status slash command
-scripts/setup.sh             — credential storage helper
+hooks/hooks.json             — 11 lifecycle hooks; each fires an sh + a PowerShell entry
+skills/setup/SKILL.md        — /rogue:setup slash command
+skills/status/SKILL.md       — /rogue:status slash command
+scripts/hook.sh              — POSIX-sh + curl dispatcher (macOS/Linux/WSL)
+scripts/hook.ps1             — PowerShell dispatcher (native Windows)
+scripts/setup.sh / setup.ps1 — credential storage helpers
 ```
 
 ### Hooks covered
 
 `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
 `PostToolUseFailure`, `PermissionRequest`, `Stop`, `SessionEnd`,
-`SubagentStart`, `SubagentStop`, `InstructionsLoaded`, `ConfigChange`.
+`SubagentStart`, `SubagentStop`, `ConfigChange`.
 
-All hooks are `type: "command"`. They source credentials from `/etc/rogue/env`
-(system-wide, for MDM) or `~/.rogue-env` (per-user) at runtime, then POST the
-event payload to `https://api.rogue.security/api/v1/hooks/claude`.
+All hooks are `type: "command"`. Each event registers **two** entries — a POSIX
+`sh` one (`hook.sh`, for macOS/Linux/WSL) and a PowerShell one (`hook.ps1`, for
+native Windows) — and exactly one does real work per machine (`hook.sh` stands
+down under Git Bash so the PowerShell entry owns Windows). They resolve
+credentials from `${CLAUDE_PLUGIN_ROOT}/env` (bundled), `/etc/rogue/env` /
+`C:\ProgramData\rogue\env` (MDM), or `~/.rogue-env` / `%USERPROFILE%\.rogue-env`
+(per-user) at runtime, then POST the event payload to
+`https://api.rogue.security/api/v1/hooks/claude`.
 
 If `ROGUE_API_KEY` is empty, hooks return `{}` (allow) — fail-open by design,
 so Claude Code never hangs on Rogue infrastructure issues.
@@ -86,7 +111,10 @@ detection as a false positive in the dashboard. Per-prompt only.
 ## Requirements
 
 - Claude Code v2.1+
-- `curl` on `PATH` (every hook uses it)
+- **macOS / Linux / WSL:** POSIX `sh` and `curl` on `PATH` (both present by default)
+- **Windows:** PowerShell 5.1+ (built in). No WSL or Git Bash required — the
+  PowerShell dispatcher uses `Invoke-WebRequest`. `git` is needed for the
+  installer (Claude clones the marketplace).
 
 ## License
 

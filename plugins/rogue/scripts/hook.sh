@@ -5,6 +5,13 @@
 
 EVENT="$1"
 
+# Git Bash stand-down: on native Windows hook.ps1 owns event handling. Git Bash's
+# `~` maps to %USERPROFILE% — the SAME creds hook.ps1 reads — so without this both
+# would POST (and double-alert on a block). macOS/Linux/WSL fall through and run.
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*) echo '{}'; exit 0 ;;
+esac
+
 [ -r "${CLAUDE_PLUGIN_ROOT}/env" ]  && . "${CLAUDE_PLUGIN_ROOT}/env"
 [ -r /etc/rogue/env ]               && . /etc/rogue/env
 [ -r "$HOME/.rogue-env" ]           && . "$HOME/.rogue-env"
@@ -32,7 +39,7 @@ RESP=$(curl -sS -X POST "${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/ho
   -H "x-rogue-actor-email: $ROGUE_ACTOR_EMAIL" \
   -H "x-rogue-actor-name: $ROGUE_ACTOR_NAME" \
   -H 'Content-Type: application/json' \
-  --data-binary @- --max-time 10 || echo '{}')
+  --data-binary @- --max-time 15 || echo '{}')
 
 # Always log raw response so block-detection bugs are diagnosable from
 # ~/.rogue/hook.log alone, without re-instrumenting the script.
@@ -89,7 +96,16 @@ To allow it: prepend \"rgx!\" to your prompt and resend (marks it a false positi
     esac
     # Background the alert so hook.sh returns immediately. Capture exit code
     # afterward so TCC denials / osascript failures become visible in the log.
-    ( bash "${CLAUDE_PLUGIN_ROOT}/scripts/security-alert.sh" "$ALERT_TITLE" "$ALERT_MSG" critical >/dev/null 2>&1; log "alert_rc=$? entrypoint=${CLAUDE_CODE_ENTRYPOINT:-unset}" ) &
+    #
+    # The trailing `>/dev/null 2>&1 </dev/null` redirects the SUBSHELL's own fds —
+    # not just security-alert.sh's. Without it the subshell inherits hook.sh's
+    # stdout/stderr (the pipe Claude reads) and, because it waits for the modal to
+    # capture alert_rc, holds that pipe OPEN until the dialog is dismissed. Claude
+    # waits for stdout EOF up to the hook `timeout`, so a dismissal slower than the
+    # timeout makes Claude time the hook out and fail-open — silently letting a
+    # blocked prompt through. Detaching the subshell's fds lets hook.sh reach EOF
+    # the instant it exits, so the block applies regardless of when the modal closes.
+    ( bash "${CLAUDE_PLUGIN_ROOT}/scripts/security-alert.sh" "$ALERT_TITLE" "$ALERT_MSG" critical >/dev/null 2>&1; log "alert_rc=$? entrypoint=${CLAUDE_CODE_ENTRYPOINT:-unset}" ) >/dev/null 2>&1 </dev/null &
   else
     log "alert_skipped=cli"
   fi
