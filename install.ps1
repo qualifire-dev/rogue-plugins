@@ -3,10 +3,10 @@
 .SYNOPSIS
     Rogue Security - one-line installer for Claude Code (Windows).
 .DESCRIPTION
-    iwr -useb https://raw.githubusercontent.com/qualifire-dev/rogue-plugin-claude/main/install.ps1 | iex
+    iwr -useb https://raw.githubusercontent.com/qualifire-dev/rogue-plugins/main/install.ps1 | iex
 
     With credentials via environment variables (non-interactive):
-    $env:ROGUE_API_KEY='rsk_xxx'; $env:ROGUE_ACTOR_EMAIL='you@co.com'; iwr -useb https://raw.githubusercontent.com/qualifire-dev/rogue-plugin-claude/main/install.ps1 | iex
+    $env:ROGUE_API_KEY='rsk_xxx'; $env:ROGUE_ACTOR_EMAIL='you@co.com'; iwr -useb https://raw.githubusercontent.com/qualifire-dev/rogue-plugins/main/install.ps1 | iex
 
     Direct invocation with flags:
     .\install.ps1 -ApiKey rsk_xxx -Email you@co.com -Name 'Your Name'
@@ -28,7 +28,7 @@
 .PARAMETER BaseUrl
     Override the API base URL (default: https://api.rogue.security).
 .PARAMETER PluginRepo
-    Marketplace source repo (default: qualifire-dev/rogue-plugin-claude).
+    Marketplace source repo (default: qualifire-dev/rogue-plugins).
 .PARAMETER NonInteractive
     Fail / skip prompts rather than ask for missing values.
 #>
@@ -54,7 +54,7 @@ if (-not $ApiKey)     { $ApiKey     = $env:ROGUE_API_KEY }
 if (-not $Email)      { $Email      = $env:ROGUE_ACTOR_EMAIL }
 if (-not $Name)       { $Name       = $env:ROGUE_ACTOR_NAME }
 if (-not $BaseUrl)    { $BaseUrl    = if ($env:ROGUE_BASE_URL) { $env:ROGUE_BASE_URL } else { $ROGUE_BASE_URL_DEFAULT } }
-if (-not $PluginRepo) { $PluginRepo = if ($env:ROGUE_PLUGIN_REPO) { $env:ROGUE_PLUGIN_REPO } else { 'qualifire-dev/rogue-plugin-claude' } }
+if (-not $PluginRepo) { $PluginRepo = if ($env:ROGUE_PLUGIN_REPO) { $env:ROGUE_PLUGIN_REPO } else { 'qualifire-dev/rogue-plugins' } }
 if ($env:ROGUE_NON_INTERACTIVE) { $NonInteractive = $true }
 
 function Log  { param([string]$M) Write-Host "-> $M" -ForegroundColor Cyan }

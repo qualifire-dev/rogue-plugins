@@ -57,7 +57,7 @@ if [ -f "$CACHE" ]; then
 fi
 touch "$CACHE" 2>/dev/null
 
-REPO="${ROGUE_PLUGIN_REPO:-qualifire-dev/rogue-plugin-claude}"
+REPO="${ROGUE_PLUGIN_REPO:-qualifire-dev/rogue-plugins}"
 
 PLUGIN_JSON="${CLAUDE_PLUGIN_ROOT:-}/.claude-plugin/plugin.json"
 if [ ! -f "$PLUGIN_JSON" ]; then
@@ -92,7 +92,7 @@ echo "upgrade available: $INSTALLED_TAG -> $LATEST, running installer"
 
 # Re-run the one-line installer in non-interactive mode. Creds already in env
 # from sourcing ~/.rogue-env above, so no prompts.
-INSTALLER_URL="${ROGUE_INSTALLER_URL:-https://raw.githubusercontent.com/qualifire-dev/rogue-plugin-claude/main/install.sh}"
+INSTALLER_URL="${ROGUE_INSTALLER_URL:-https://raw.githubusercontent.com/qualifire-dev/rogue-plugins/main/install.sh}"
 curl -fsSL --max-time 60 "$INSTALLER_URL" | ROGUE_NON_INTERACTIVE=1 bash
 RC=$?
 echo "installer exited rc=$RC"

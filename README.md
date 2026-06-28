@@ -12,19 +12,19 @@ One-line installer (recommended):
 **macOS / Linux:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/qualifire-dev/rogue-plugin-claude/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/qualifire-dev/rogue-plugins/main/install.sh | bash
 ```
 
 **Windows** (PowerShell 5.1+, run as your normal user):
 
 ```powershell
-iwr -useb https://raw.githubusercontent.com/qualifire-dev/rogue-plugin-claude/main/install.ps1 | iex
+iwr -useb https://raw.githubusercontent.com/qualifire-dev/rogue-plugins/main/install.ps1 | iex
 ```
 
 Pass credentials via environment variables before the one-liner when running non-interactively:
 
 ```powershell
-$env:ROGUE_API_KEY='rsk_xxx'; $env:ROGUE_ACTOR_EMAIL='you@co.com'; iwr -useb https://raw.githubusercontent.com/qualifire-dev/rogue-plugin-claude/main/install.ps1 | iex
+$env:ROGUE_API_KEY='rsk_xxx'; $env:ROGUE_ACTOR_EMAIL='you@co.com'; iwr -useb https://raw.githubusercontent.com/qualifire-dev/rogue-plugins/main/install.ps1 | iex
 ```
 
 The installer adds the marketplace and installs the plugin via the Claude CLI
@@ -39,7 +39,7 @@ Native Windows support requires no WSL or Git Bash: every hook ships both a POSI
 Manual install (inside Claude Code v2.1+):
 
 ```
-/plugin marketplace add qualifire-dev/rogue-plugin-claude
+/plugin marketplace add qualifire-dev/rogue-plugins
 /plugin install rogue@rogue-marketplace
 /rogue:setup
 ```

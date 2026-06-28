@@ -11,7 +11,7 @@
 # end-user's machine. Per-user ~/.rogue-env overrides still win.
 #
 # One-liner (admin runs this):
-#   curl -fsSL https://raw.githubusercontent.com/qualifire-dev/rogue-plugin-claude/main/scripts/compile-customer-plugin.sh \
+#   curl -fsSL https://raw.githubusercontent.com/qualifire-dev/rogue-plugins/main/scripts/compile-customer-plugin.sh \
 #     | bash -s -- --key rsk_xxx
 #
 # Local / interactive (prompts for missing args):
@@ -23,14 +23,14 @@
 #   --from vX.Y.Z    Source release tag (default: latest GitHub release)
 #   --out PATH       Output zip path (default: ./rogue-aidr-compiled-<ver>.zip)
 #   --base-url URL   Override ROGUE_BASE_URL (rare)
-#   --repo OWNER/REPO  Source repo (default: qualifire-dev/rogue-plugin-claude)
+#   --repo OWNER/REPO  Source repo (default: qualifire-dev/rogue-plugins)
 #
 # Output: a flat zip whose root contains .claude-plugin/, hooks/, scripts/,
 # skills/, and env. Drag-drop or extract into ~/.claude/plugins/<name>/.
 
 set -euo pipefail
 
-REPO="qualifire-dev/rogue-plugin-claude"
+REPO="qualifire-dev/rogue-plugins"
 KEY=""; MODE=""; FROM=""; OUT=""; BASE_URL=""
 
 while [ $# -gt 0 ]; do

@@ -2,7 +2,7 @@
 #
 # Rogue Security — one-line installer for Claude Code.
 #
-#   curl -fsSL https://raw.githubusercontent.com/qualifire-dev/rogue-plugin-claude/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/qualifire-dev/rogue-plugins/main/install.sh | bash
 #
 # Installs the Rogue Security AIDR plugin through the official Claude CLI
 # (marketplace add + plugin install), validates and stores your API key,
@@ -40,7 +40,7 @@
 set -u
 
 # ── Config ──────────────────────────────────────────────────────────────────
-ROGUE_PLUGIN_REPO="${ROGUE_PLUGIN_REPO:-qualifire-dev/rogue-plugin-claude}"
+ROGUE_PLUGIN_REPO="${ROGUE_PLUGIN_REPO:-qualifire-dev/rogue-plugins}"
 ROGUE_BASE_URL="${ROGUE_BASE_URL:-https://api.rogue.security}"
 MARKETPLACE_NAME="rogue-marketplace"
 PLUGIN_NAME="rogue"
