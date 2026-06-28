@@ -44,8 +44,7 @@ try {
 # Stand down on non-Windows (pwsh on macOS/Linux runs heartbeat.sh instead).
 if ($PSVersionTable.PSVersion.Major -ge 6 -and -not $IsWindows) { exit 0 }
 
-$pluginRoot = $env:CLAUDE_PLUGIN_ROOT
-if (-not $pluginRoot) { $pluginRoot = $env:PLUGIN_ROOT }
+$pluginRoot = $env:PLUGIN_ROOT
 if (-not $pluginRoot) { try { $pluginRoot = (Get-Location).Path } catch { $pluginRoot = '.' } }
 
 # ── credential resolution ──────────────────────────────────────────────────
@@ -71,12 +70,10 @@ $baseUrl = $baseUrl.TrimEnd('/')
 # ── actor resolution (mirrors actor.sh) ────────────────────────────────────
 $actorName = $creds['ROGUE_ACTOR_NAME']
 if (-not $actorName) { try { $actorName = (& git config --global user.name 2>$null | Out-String).Trim() } catch {} }
-if (-not $actorName -and $env:CLAUDE_CODE_USER_EMAIL) { $actorName = ($env:CLAUDE_CODE_USER_EMAIL -split '@')[0] }
 if (-not $actorName) { $actorName = $env:USERNAME }
 
 $actorEmail = $creds['ROGUE_ACTOR_EMAIL']
 if (-not $actorEmail) { try { $actorEmail = (& git config --global user.email 2>$null | Out-String).Trim() } catch {} }
-if (-not $actorEmail -and $env:CLAUDE_CODE_USER_EMAIL) { $actorEmail = $env:CLAUDE_CODE_USER_EMAIL }
 if (-not $actorEmail) {
     if ($env:USERNAME -and $env:COMPUTERNAME) { $actorEmail = "$($env:USERNAME)@$($env:COMPUTERNAME)" }
     elseif ($env:USERNAME) { $actorEmail = $env:USERNAME } else { $actorEmail = $env:COMPUTERNAME }

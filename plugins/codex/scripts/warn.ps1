@@ -4,8 +4,7 @@ $ErrorActionPreference = 'SilentlyContinue'
 
 if ($PSVersionTable.PSVersion.Major -ge 6 -and -not $IsWindows) { exit 0 }
 
-$pluginRoot = $env:CLAUDE_PLUGIN_ROOT
-if (-not $pluginRoot) { $pluginRoot = $env:PLUGIN_ROOT }
+$pluginRoot = $env:PLUGIN_ROOT
 
 # Mirror the real resolution order (later file wins; process env wins over all),
 # and treat a blank final value as unconfigured — a non-empty earlier value must

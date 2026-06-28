@@ -51,13 +51,12 @@ Run `git config user.email` and `git config user.name` to detect the user's git 
 Run the setup script with the API key, email, name, and surface. Use `codex_app` if
 running inside the Codex desktop app, otherwise `codex_cli`:
 ```bash
-bash "${PLUGIN_ROOT:-$CLAUDE_PLUGIN_ROOT}/scripts/setup.sh" "$ROGUE_API_KEY" "<EMAIL>" "<NAME>" "codex_cli"
+bash "${PLUGIN_ROOT}/scripts/setup.sh" "$ROGUE_API_KEY" "<EMAIL>" "<NAME>" "codex_cli"
 ```
 
 Windows (PowerShell):
 ```powershell
-$root = if ($env:PLUGIN_ROOT) { $env:PLUGIN_ROOT } else { $env:CLAUDE_PLUGIN_ROOT }
-& "$root\scripts\setup.ps1" $ROGUE_API_KEY "<EMAIL>" "<NAME>" "codex_cli"
+& "$env:PLUGIN_ROOT\scripts\setup.ps1" $ROGUE_API_KEY "<EMAIL>" "<NAME>" "codex_cli"
 ```
 
 This writes `~/.rogue-env` / `%USERPROFILE%\.rogue-env` (locked to the user). Hooks read it at runtime — no shell profile changes needed.

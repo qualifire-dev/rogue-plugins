@@ -11,7 +11,7 @@
 # infrastructure is unavailable.
 #
 # Credential resolution (later file wins; process env wins over all):
-#   1. ${CLAUDE_PLUGIN_ROOT}\env   (baked into a compiled customer plugin)
+#   1. ${PLUGIN_ROOT}\env          (baked into a compiled customer plugin)
 #   2. C:\ProgramData\rogue\env    (MDM-provisioned; mirrors /etc/rogue/env)
 #   3. %USERPROFILE%\.rogue-env    (user / installer-written)
 
@@ -69,8 +69,7 @@ if ($PSVersionTable.PSVersion.Major -ge 6 -and -not $IsWindows) { Write-Raw '{}'
 if (-not $EventName) { Write-Raw '{}'; exit 0 }
 Dbg "event=$EventName"
 
-$pluginRoot = $env:CLAUDE_PLUGIN_ROOT
-if (-not $pluginRoot) { $pluginRoot = $env:PLUGIN_ROOT }
+$pluginRoot = $env:PLUGIN_ROOT
 if (-not $pluginRoot) { try { $pluginRoot = (Get-Location).Path } catch { $pluginRoot = '.' } }
 
 $logFile = $env:ROGUE_LOG_FILE
@@ -121,12 +120,10 @@ if (-not $url) {
 # ── actor resolution (mirrors actor.sh) ────────────────────────────────────
 $actorName = $creds['ROGUE_ACTOR_NAME']
 if (-not $actorName) { try { $actorName = (& git config --global user.name 2>$null | Out-String).Trim() } catch {} }
-if (-not $actorName -and $env:CLAUDE_CODE_USER_EMAIL) { $actorName = ($env:CLAUDE_CODE_USER_EMAIL -split '@')[0] }
 if (-not $actorName) { $actorName = $env:USERNAME }
 
 $actorEmail = $creds['ROGUE_ACTOR_EMAIL']
 if (-not $actorEmail) { try { $actorEmail = (& git config --global user.email 2>$null | Out-String).Trim() } catch {} }
-if (-not $actorEmail -and $env:CLAUDE_CODE_USER_EMAIL) { $actorEmail = $env:CLAUDE_CODE_USER_EMAIL }
 if (-not $actorEmail) {
     if ($env:USERNAME -and $env:COMPUTERNAME) { $actorEmail = "$($env:USERNAME)@$($env:COMPUTERNAME)" }
     elseif ($env:USERNAME) { $actorEmail = $env:USERNAME } else { $actorEmail = $env:COMPUTERNAME }

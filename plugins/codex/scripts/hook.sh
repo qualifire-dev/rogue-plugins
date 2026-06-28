@@ -10,13 +10,11 @@
 
 EVENT="$1"
 
-# Codex sets PLUGIN_ROOT (native) and CLAUDE_PLUGIN_ROOT (compat alias). Prefer the
-# native one and normalize CLAUDE_PLUGIN_ROOT from it, so every internal reference
-# below keeps working even if the alias is ever dropped.
-: "${CLAUDE_PLUGIN_ROOT:=${PLUGIN_ROOT:-}}"
+# Codex sets PLUGIN_ROOT to the installed plugin directory.
+PLUGIN_ROOT="${PLUGIN_ROOT:-}"
 
 # Env precedence (later wins): bundled → MDM → per-user.
-[ -r "${CLAUDE_PLUGIN_ROOT}/env" ]  && . "${CLAUDE_PLUGIN_ROOT}/env"
+[ -r "${PLUGIN_ROOT}/env" ]  && . "${PLUGIN_ROOT}/env"
 [ -r /etc/rogue/env ]               && . /etc/rogue/env
 [ -r "$HOME/.rogue-env" ]           && . "$HOME/.rogue-env"
 
@@ -33,7 +31,7 @@ if [ -z "${ROGUE_API_KEY:-}" ]; then
   exit 0
 fi
 
-. "${CLAUDE_PLUGIN_ROOT}/scripts/actor.sh"
+. "${PLUGIN_ROOT}/scripts/actor.sh"
 
 # Surface label (codex_app | codex_cli). Codex sets no app/cli entrypoint var, so
 # the installer pins ROGUE_CODEX_SURFACE per surface; default to codex_cli.

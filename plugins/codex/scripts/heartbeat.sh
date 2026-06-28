@@ -7,28 +7,23 @@
 # blocks Codex, never affects allow/deny, exits 0 on every path.
 set -u
 
-# Codex sets PLUGIN_ROOT (native) + CLAUDE_PLUGIN_ROOT (compat alias). Normalize
-# the alias from the native var so internal refs survive an alias drop.
-: "${CLAUDE_PLUGIN_ROOT:=${PLUGIN_ROOT:-}}"
+# Codex sets PLUGIN_ROOT to the installed plugin directory.
+PLUGIN_ROOT="${PLUGIN_ROOT:-}"
 
 # Same env precedence as hook.sh (later wins): bundled → MDM → per-user.
-[ -r "${CLAUDE_PLUGIN_ROOT:-}/env" ] && . "${CLAUDE_PLUGIN_ROOT}/env"
+[ -r "${PLUGIN_ROOT}/env" ] && . "${PLUGIN_ROOT}/env"
 [ -r /etc/rogue/env ]                && . /etc/rogue/env
 [ -r "$HOME/.rogue-env" ]            && . "$HOME/.rogue-env"
 
 # Not configured → no-op (mirrors hook.sh fail-open on missing key).
 [ -n "${ROGUE_API_KEY:-}" ] || exit 0
 
-# actor.sh uses ${CLAUDE_CODE_USER_EMAIL%@*} with no default, which aborts under
-# `set -u`; relax nounset across the source.
-set +u
-[ -r "${CLAUDE_PLUGIN_ROOT:-}/scripts/actor.sh" ] && . "${CLAUDE_PLUGIN_ROOT}/scripts/actor.sh"
-set -u
+[ -r "${PLUGIN_ROOT}/scripts/actor.sh" ] && . "${PLUGIN_ROOT}/scripts/actor.sh"
 
 # Plugin version from the manifest WITHOUT python3 (the /usr/bin/python3 stub
 # fails silently on a fresh macOS). grep/sed are always present.
 VER="unknown"
-PJ="${CLAUDE_PLUGIN_ROOT:-}/.codex-plugin/plugin.json"
+PJ="${PLUGIN_ROOT}/.codex-plugin/plugin.json"
 if [ -r "$PJ" ]; then
   v=$(grep -oE '"version"[[:space:]]*:[[:space:]]*"[0-9][^"]*"' "$PJ" \
         | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
