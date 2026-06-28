@@ -47,6 +47,36 @@ tar -czf "$OUT" -C "$STAGE" "rogue-plugin-claude"
 SIZE=$(wc -c < "$OUT" | awk '{print $1}')
 echo "✓ $OUT  ($SIZE bytes, version $PLUGIN_VERSION)"
 
+# ── Codex plugin tarball ────────────────────────────────────────────────────
+# Primary Codex install path is `codex plugin marketplace add <repo>` (git), but
+# we also ship a versionless tarball so /releases/latest/download URLs are stable
+# (used by compiled-key MDM bundles and any download-based install).
+if [ -d "plugins/codex" ]; then
+  # Fail hard: the manifest is the version source of truth, and release.yml uploads
+  # every dist/*.tar.gz — a missing/malformed manifest must not ship as "unknown".
+  # Read the version WITHOUT python3 (absent on a fresh macOS), matching the claude
+  # build above.
+  CODEX_VERSION=$(grep -oE '"version"[[:space:]]*:[[:space:]]*"[0-9][^"]*"' \
+    plugins/codex/.codex-plugin/plugin.json 2>/dev/null | head -1 \
+    | grep -oE '[0-9]+\.[0-9]+\.[0-9]+') && [ -n "$CODEX_VERSION" ] || {
+    echo "✗ unable to read plugins/codex/.codex-plugin/plugin.json" >&2; exit 1
+  }
+  echo "→ codex plugin version: $CODEX_VERSION"
+  # Single cross-platform tarball (no OS suffix), matching the claude artifact —
+  # the package ships both .sh and .ps1, so /latest/download/ stays stable.
+  CXSTAGE=$(mktemp -d)
+  CXTOP="$CXSTAGE/rogue-plugin-codex"
+  mkdir -p "$CXTOP/plugins" "$CXTOP/.agents/plugins"
+  cp .agents/plugins/marketplace.json "$CXTOP/.agents/plugins/"
+  cp -R plugins/codex "$CXTOP/plugins/"
+  cp README.md LICENSE "$CXTOP/" 2>/dev/null || true
+  CXOUT="$DIST/rogue-plugin-codex.tar.gz"
+  tar -czf "$CXOUT" -C "$CXSTAGE" "rogue-plugin-codex"
+  CXSIZE=$(wc -c < "$CXOUT" | awk '{print $1}')
+  echo "✓ $CXOUT  ($CXSIZE bytes, version $CODEX_VERSION)"
+  rm -rf "$CXSTAGE"
+fi
+
 echo ""
 echo "dist/:"
 ls -la "$DIST"

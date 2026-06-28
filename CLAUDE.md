@@ -10,6 +10,20 @@ There is no build step for the plugin itself: it's a directory of JSON + shell s
 
 **Cross-platform by dual dispatcher.** Every event ships TWO implementations — a POSIX-`sh` script (`hook.sh` & friends) for macOS/Linux/WSL and a PowerShell sibling (`hook.ps1` & friends) for **native Windows (no WSL, no Git Bash)**. `hooks.json` registers an `sh` entry and a PowerShell entry for each event; exactly one does real work per machine (see "The hook pattern"). When you change one dispatcher's behavior, change the other to match — keep `hook.sh` / `hook.ps1` in lockstep.
 
+**This repo is now a multi-agent monorepo.** Besides the Claude plugin (`plugins/rogue/`, endpoint `/hooks/claude`) it also ships the **OpenAI Codex** plugin (`plugins/codex/`, endpoint `/hooks/openai`, family `openai`, surface `codex_cli`/`codex_app`) and a **caveman-style multi-agent installer** (`install-all.sh` / `install-all.ps1`) that detects every installed coding agent and installs the matching Rogue plugin into each.
+
+### Codex plugin (`plugins/codex/`)
+Mirrors the Claude plugin with deliberate differences:
+- **Manifest is `.codex-plugin/plugin.json`**; the Codex marketplace file is `.agents/plugins/marketplace.json` (kept separate from the Claude `.claude-plugin/marketplace.json` so the shared plugin name `rogue` doesn't collide and Codex never falls back to the Claude marketplace).
+- **Codex-native env vars ONLY.** Use `PLUGIN_ROOT` / `PLUGIN_DATA` — never any `CLAUDE_*` variable. Codex exposes `CLAUDE_PLUGIN_ROOT`/`CLAUDE_CODE_USER_EMAIL` as compat shims, but the Codex plugin must not reference them (`hooks.json` uses `${PLUGIN_ROOT}` / `%PLUGIN_ROOT%`; `actor.sh` cascade is env → `git config` → hostname/whoami).
+- **`hook.sh`/`hook.ps1` are PURE RELAY** — no block-detection regex, no `security-alert` script. Codex displays the native deny shape itself; the Claude modal exists only because the Claude app hides the block reason. Don't add an alert to Codex.
+- **No `auto-update.sh`.** Codex has no documented native plugin auto-update, but the updater is speculative + fragile, so v1 omits it; heartbeat's `update_available` drives the dashboard "outdated" badge instead. Re-add (copy Claude's) only if a confirmed gap needs silent push.
+- No `CLAUDE_CODE_ENTRYPOINT` gate (Codex doesn't set it; the hook only ever fires from Codex's own `hooks.json`).
+- **Hook trust**: Codex hashes the whole hook definition and skips untrusted command hooks until reviewed via `/hooks`. Keep `hooks.json` command strings (POSIX `command` + Windows `commandWindows`) **byte-identical forever**; mutate only `scripts/*` so trust survives updates. Setup/status commands document the one-time `/hooks` trust step.
+
+### Multi-agent installer (`install-all.sh` / `install-all.ps1`)
+A thin bash/PowerShell dispatcher (no node/python). A `PROVIDERS` table detects agents (`command -v` / `Get-Command` + dir probes). All Rogue plugins **share `~/.rogue-env`**, so it prompts + validates the key via `/hooks/ping` ONCE, writes the shared env, then runs each per-agent install non-interactively (`claude/codex plugin install`, or curls the Cursor installer). Flags mirror caveman: `--only/--skip/--list/--dry-run/--force/--non-interactive/--api-key`. Fail-soft per agent.
+
 ## Repo layout (load-bearing pieces)
 
 - `.claude-plugin/marketplace.json` — marketplace manifest. Points at `./plugins/rogue`.

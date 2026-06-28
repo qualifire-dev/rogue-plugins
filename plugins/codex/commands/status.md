@@ -1,0 +1,89 @@
+---
+description: Check Rogue Security AIDR connection status, active rulesets, and configuration
+---
+
+# Rogue Security Status (Codex)
+
+Check the current status of the Rogue Security AIDR integration. The plugin hooks
+source credentials from three locations in order (later wins): the plugin's bundled
+`env` (managed installs), `/etc/rogue/env` (MDM-provisioned), and `~/.rogue-env`
+(per-user setup).
+
+The commands below are bash (macOS/Linux). **On Windows**, run the PowerShell
+equivalents: read the key from `%USERPROFILE%\.rogue-env` (and
+`C:\ProgramData\rogue\env` for MDM), then hit the same endpoints with
+`Invoke-WebRequest` — e.g.
+`Invoke-WebRequest "$($env:ROGUE_BASE_URL ?? 'https://api.rogue.security')/api/v1/hooks/config" -Headers @{ 'x-rogue-api-key' = $ROGUE_API_KEY } -UseBasicParsing`
+(use an `if`/`else` for the base-URL default on PowerShell 5.1, which lacks `??`).
+
+## Step 1: Source credentials and report what's found
+
+```bash
+cat > /tmp/rogue-source-env.sh <<'EOF'
+PLUGIN_ENV=$(find "$HOME/.codex/plugins" -name env -type f -path '*rogue*' 2>/dev/null | head -1)
+[ -n "$PLUGIN_ENV" ] && [ -r "$PLUGIN_ENV" ] && . "$PLUGIN_ENV"
+[ -r /etc/rogue/env ]              && . /etc/rogue/env
+[ -r "$HOME/.rogue-env" ]          && . "$HOME/.rogue-env"
+EOF
+chmod +x /tmp/rogue-source-env.sh
+
+. /tmp/rogue-source-env.sh
+echo "Credential sources detected:"
+PLUGIN_ENV=$(find "$HOME/.codex/plugins" -name env -type f -path '*rogue*' 2>/dev/null | head -1)
+[ -n "$PLUGIN_ENV" ] && echo "  $PLUGIN_ENV  (plugin bundle)"
+[ -r /etc/rogue/env ]     && echo "  /etc/rogue/env  (MDM)"
+[ -r "$HOME/.rogue-env" ] && echo "  $HOME/.rogue-env  (per-user)"
+[ -z "$PLUGIN_ENV" ] && [ ! -r /etc/rogue/env ] && [ ! -r "$HOME/.rogue-env" ] && echo "  (none)"
+[ -n "$ROGUE_API_KEY" ] && echo "API key resolved: ...${ROGUE_API_KEY: -4}" || echo "API key: not resolved"
+```
+
+If no sources are found OR `ROGUE_API_KEY` is empty: individual users run
+`/rogue:setup`; managed users contact their security admin. Stop here in that case.
+
+## Step 2: Test connection + register heartbeat
+
+```bash
+. /tmp/rogue-source-env.sh
+PJ=$(find "$HOME/.codex/plugins" -path '*rogue*/.codex-plugin/plugin.json' 2>/dev/null | head -1)
+VER=$(grep -oE '"version"[[:space:]]*:[[:space:]]*"[0-9][^"]*"' "$PJ" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+SURFACE="${ROGUE_CODEX_SURFACE:-codex_cli}"
+# Escape backslash + double-quote so an actor name/email with a " or \ (from git
+# config) can't produce invalid JSON — mirrors scripts/heartbeat.sh.
+esc() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
+curl -s -w "\n%{http_code}" -X POST \
+  "${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/status" \
+  -H "x-rogue-api-key: $ROGUE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"agent_family\":\"openai\",\"agent\":\"$SURFACE\",\"version\":\"${VER:-unknown}\",\"host\":\"$(esc "$(hostname)")\",\"actor_email\":\"$(esc "${ROGUE_ACTOR_EMAIL:-}")\",\"actor_name\":\"$(esc "${ROGUE_ACTOR_NAME:-}")\"}"
+```
+
+Report from the JSON response (HTTP 200 = connected): organization name, running
+vs latest version, and whether `update_available` is `true`. On HTTP 401 the key
+is invalid; no response → check network reachability to `api.rogue.security`.
+
+## Step 3: Fetch configuration
+
+```bash
+. /tmp/rogue-source-env.sh
+curl -s -H "x-rogue-api-key: $ROGUE_API_KEY" \
+  "${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/config"
+```
+
+Parse and display: **Mode** (`settings.mode`), **Fail-open** (`settings.failOpen`),
+and each **ruleset** in `rulesets` (name, category, mode, severity).
+
+## Step 4: Confirm hooks are trusted
+
+Remind the user that Codex skips untrusted command hooks. If no events are showing
+up in the dashboard, open `/hooks` in Codex and trust the Rogue entries.
+
+## Step 5: Summary
+
+Present a clean summary: credential sources, connection status, mode + ruleset
+count, actor identity (`${ROGUE_ACTOR_EMAIL}` / `${ROGUE_ACTOR_NAME}`).
+
+## Step 6: False-positive escape hatch
+
+> **Was a prompt blocked by mistake?** Prepend `rgx!` to your next prompt and
+> resubmit. Rogue allows that one prompt and marks the previous detection as a
+> false positive. The override is per-prompt only.
