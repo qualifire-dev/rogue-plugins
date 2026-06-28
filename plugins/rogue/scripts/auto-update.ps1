@@ -68,7 +68,7 @@ if (Test-Path -LiteralPath $cache) {
 }
 try { Set-Content -LiteralPath $cache -Value '' -Encoding ASCII } catch {}
 
-$repo = ReadEnvVar 'ROGUE_PLUGIN_REPO'; if (-not $repo) { $repo = 'qualifire-dev/rogue-plugin-claude' }
+$repo = ReadEnvVar 'ROGUE_PLUGIN_REPO'; if (-not $repo) { $repo = 'qualifire-dev/rogue-plugins' }
 
 $pluginRoot = $env:CLAUDE_PLUGIN_ROOT
 $pj = Join-Path $pluginRoot '.claude-plugin\plugin.json'
@@ -88,7 +88,7 @@ if ($latest -eq $installedTag) { LogLine "up to date at $installedTag"; exit 0 }
 
 LogLine "upgrade available: $installedTag -> $latest, running installer"
 $installerUrl = ReadEnvVar 'ROGUE_INSTALLER_URL'
-if (-not $installerUrl) { $installerUrl = 'https://raw.githubusercontent.com/qualifire-dev/rogue-plugin-claude/main/install.ps1' }
+if (-not $installerUrl) { $installerUrl = 'https://raw.githubusercontent.com/qualifire-dev/rogue-plugins/main/install.ps1' }
 try {
     $script = (Invoke-WebRequest -Uri $installerUrl -UseBasicParsing -TimeoutSec 60 -ErrorAction Stop).Content
     $env:ROGUE_NON_INTERACTIVE = '1'

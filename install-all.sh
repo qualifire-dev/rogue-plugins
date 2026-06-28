@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Rogue Security AIDR — one-liner multi-agent installer (caveman-style).
 #
-#   curl -fsSL https://raw.githubusercontent.com/qualifire-dev/rogue-plugin-claude/main/install-all.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/qualifire-dev/rogue-plugins/main/install-all.sh | bash
 #
 # Detects every supported coding agent on this machine and installs the matching
 # Rogue plugin into each. Credentials live in the SHARED ~/.rogue-env, so we
@@ -20,7 +20,7 @@
 #   --api-key K --actor-email E --actor-name N --base-url U
 set -u
 
-REPO="${ROGUE_REPO:-qualifire-dev/rogue-plugin-claude}"
+REPO="${ROGUE_REPO:-qualifire-dev/rogue-plugins}"
 BASE_URL="${ROGUE_BASE_URL:-https://api.rogue.security}"
 ENV_FILE="${ROGUE_ENV_FILE:-$HOME/.rogue-env}"
 CURSOR_INSTALLER="${ROGUE_CURSOR_INSTALLER_URL:-https://raw.githubusercontent.com/qualifire-dev/rogue-plugin-cursor/main/install.sh}"

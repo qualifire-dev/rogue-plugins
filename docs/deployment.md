@@ -57,7 +57,7 @@ If you already know the pieces, here are the four commands:
 
 ```bash
 # 1. Compile the org bundle (on your machine)
-curl -fsSL https://raw.githubusercontent.com/qualifire-dev/rogue-plugin-claude/main/scripts/compile-customer-plugin.sh \
+curl -fsSL https://raw.githubusercontent.com/qualifire-dev/rogue-plugins/main/scripts/compile-customer-plugin.sh \
   | bash -s -- --key <your-rsk-key>
 
 # 2. Upload rogue-aidr-compiled-<version>.zip via the Claude management UI
@@ -68,7 +68,7 @@ curl -fsSL https://raw.githubusercontent.com/qualifire-dev/rogue-plugin-claude/m
 set -e
 [ -n "$USER_EMAIL" ] && [ -n "$USER_FULL_NAME" ] || exit 0
 ROGUE_ACTOR_EMAIL="$USER_EMAIL" ROGUE_ACTOR_NAME="$USER_FULL_NAME" \
-  bash <(curl -fsSL https://raw.githubusercontent.com/qualifire-dev/rogue-plugin-claude/main/scripts/mdm-provision-actor.sh)
+  bash <(curl -fsSL https://raw.githubusercontent.com/qualifire-dev/rogue-plugins/main/scripts/mdm-provision-actor.sh)
 
 # 4. On a test device, verify
 /rogue:status
@@ -81,7 +81,7 @@ The rest of this doc explains each step and how to debug it.
 On any machine you trust:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/qualifire-dev/rogue-plugin-claude/main/scripts/compile-customer-plugin.sh \
+curl -fsSL https://raw.githubusercontent.com/qualifire-dev/rogue-plugins/main/scripts/compile-customer-plugin.sh \
   | bash -s -- --key <your-rsk-key>
 ```
 
@@ -97,7 +97,7 @@ and enforcement defaults.
 | `--from vX.Y.Z` | latest GitHub release | Pin to a specific release tag |
 | `--out PATH` | `./rogue-aidr-compiled-<ver>.zip` | Output path |
 | `--base-url URL` | `https://api.rogue.security` | Custom Rogue endpoint |
-| `--repo OWNER/REPO` | `qualifire-dev/rogue-plugin-claude` | Source mirror |
+| `--repo OWNER/REPO` | `qualifire-dev/rogue-plugins` | Source mirror |
 
 The script can also be downloaded and run locally — passing args
 non-interactively or letting it prompt via `/dev/tty`.
@@ -147,7 +147,7 @@ set -e
 
 ROGUE_ACTOR_EMAIL="$USER_EMAIL" \
 ROGUE_ACTOR_NAME="$USER_FULL_NAME" \
-  bash <(curl -fsSL https://raw.githubusercontent.com/qualifire-dev/rogue-plugin-claude/main/scripts/mdm-provision-actor.sh)
+  bash <(curl -fsSL https://raw.githubusercontent.com/qualifire-dev/rogue-plugins/main/scripts/mdm-provision-actor.sh)
 ```
 
 `$USER_EMAIL` and `$USER_FULL_NAME` are Kandji variables that resolve from
@@ -173,7 +173,7 @@ set -e
 EMAIL="$4"
 NAME="$5"
 [ -n "$EMAIL" ] && [ -n "$NAME" ] || exit 0
-bash <(curl -fsSL https://raw.githubusercontent.com/qualifire-dev/rogue-plugin-claude/main/scripts/mdm-provision-actor.sh) \
+bash <(curl -fsSL https://raw.githubusercontent.com/qualifire-dev/rogue-plugins/main/scripts/mdm-provision-actor.sh) \
   --email "$EMAIL" --name "$NAME"
 ```
 
@@ -335,4 +335,4 @@ overwrites `/etc/rogue/env` with the new identity. No manual cleanup.
 
 ---
 
-Issues or corrections: <https://github.com/qualifire-dev/rogue-plugin-claude/issues>.
+Issues or corrections: <https://github.com/qualifire-dev/rogue-plugins/issues>.

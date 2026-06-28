@@ -1,6 +1,6 @@
 # Rogue Security AIDR — one-liner multi-agent installer (Windows / PowerShell).
 #
-#   irm https://raw.githubusercontent.com/qualifire-dev/rogue-plugin-claude/main/install-all.ps1 | iex
+#   irm https://raw.githubusercontent.com/qualifire-dev/rogue-plugins/main/install-all.ps1 | iex
 #
 # Windows sibling of install-all.sh. Detects supported coding agents, collects +
 # validates credentials ONCE into the shared %USERPROFILE%\.rogue-env, then runs
@@ -27,7 +27,7 @@ try {
         [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 } catch {}
 
-$Repo    = if ($env:ROGUE_REPO) { $env:ROGUE_REPO } else { 'qualifire-dev/rogue-plugin-claude' }
+$Repo    = if ($env:ROGUE_REPO) { $env:ROGUE_REPO } else { 'qualifire-dev/rogue-plugins' }
 $EnvFile = if ($env:ROGUE_ENV_FILE) { $env:ROGUE_ENV_FILE } else { Join-Path $env:USERPROFILE '.rogue-env' }
 $CursorInstaller = if ($env:ROGUE_CURSOR_INSTALLER_PS1) { $env:ROGUE_CURSOR_INSTALLER_PS1 } else { 'https://raw.githubusercontent.com/qualifire-dev/rogue-plugin-cursor/main/install.ps1' }
 
