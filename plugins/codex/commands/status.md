@@ -9,6 +9,13 @@ source credentials from three locations in order (later wins): the plugin's bund
 `env` (managed installs), `/etc/rogue/env` (MDM-provisioned), and `~/.rogue-env`
 (per-user setup).
 
+The commands below are bash (macOS/Linux). **On Windows**, run the PowerShell
+equivalents: read the key from `%USERPROFILE%\.rogue-env` (and
+`C:\ProgramData\rogue\env` for MDM), then hit the same endpoints with
+`Invoke-WebRequest` — e.g.
+`Invoke-WebRequest "$($env:ROGUE_BASE_URL ?? 'https://api.rogue.security')/api/v1/hooks/config" -Headers @{ 'x-rogue-api-key' = $ROGUE_API_KEY } -UseBasicParsing`
+(use an `if`/`else` for the base-URL default on PowerShell 5.1, which lacks `??`).
+
 ## Step 1: Source credentials and report what's found
 
 ```bash

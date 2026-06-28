@@ -10,9 +10,12 @@
 
 EVENT="$1"
 
-# Env precedence (later wins): bundled → MDM → per-user. Codex sets both
-# PLUGIN_ROOT and CLAUDE_PLUGIN_ROOT; we use CLAUDE_PLUGIN_ROOT so the scripts
-# stay close to the Claude variants.
+# Codex sets PLUGIN_ROOT (native) and CLAUDE_PLUGIN_ROOT (compat alias). Prefer the
+# native one and normalize CLAUDE_PLUGIN_ROOT from it, so every internal reference
+# below keeps working even if the alias is ever dropped.
+: "${CLAUDE_PLUGIN_ROOT:=${PLUGIN_ROOT:-}}"
+
+# Env precedence (later wins): bundled → MDM → per-user.
 [ -r "${CLAUDE_PLUGIN_ROOT}/env" ]  && . "${CLAUDE_PLUGIN_ROOT}/env"
 [ -r /etc/rogue/env ]               && . /etc/rogue/env
 [ -r "$HOME/.rogue-env" ]           && . "$HOME/.rogue-env"

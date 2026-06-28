@@ -4,7 +4,13 @@ description: Set up Rogue Security AIDR integration — configure API key, detec
 
 # Rogue Security Setup (Codex)
 
-Help the user set up their Rogue Security AIDR integration for OpenAI Codex. Follow these steps in order:
+Help the user set up their Rogue Security AIDR integration for OpenAI Codex. Follow these steps in order.
+
+The commands below are bash (macOS/Linux). **On Windows**, use the PowerShell
+equivalents — the env file is `$env:USERPROFILE\.rogue-env`; check it with
+`Test-Path`, validate the key with `Invoke-WebRequest`, and store credentials with
+`scripts\setup.ps1` (instead of `scripts/setup.sh`). The Windows equivalent for
+each step is shown after the bash block where it differs.
 
 ## Step 1: Check existing configuration
 
@@ -27,6 +33,13 @@ read -rs ROGUE_API_KEY   # paste the key at the prompt; not echoed, not in histo
 curl -s -o /dev/null -w "%{http_code}" -H "x-rogue-api-key: $ROGUE_API_KEY" https://api.rogue.security/api/v1/hooks/ping
 ```
 
+Windows (PowerShell):
+```powershell
+$sec = Read-Host -AsSecureString "Rogue API key"
+$ROGUE_API_KEY = [System.Net.NetworkCredential]::new('', $sec).Password
+(Invoke-WebRequest -Uri https://api.rogue.security/api/v1/hooks/ping -Headers @{ 'x-rogue-api-key' = $ROGUE_API_KEY } -UseBasicParsing).StatusCode
+```
+
 If the response is not `200`, tell the user the key is invalid and ask them to try again.
 
 ## Step 4: Detect identity
@@ -38,10 +51,16 @@ Run `git config user.email` and `git config user.name` to detect the user's git 
 Run the setup script with the API key, email, name, and surface. Use `codex_app` if
 running inside the Codex desktop app, otherwise `codex_cli`:
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup.sh" "<API_KEY>" "<EMAIL>" "<NAME>" "codex_cli"
+bash "${PLUGIN_ROOT:-$CLAUDE_PLUGIN_ROOT}/scripts/setup.sh" "$ROGUE_API_KEY" "<EMAIL>" "<NAME>" "codex_cli"
 ```
 
-This writes `~/.rogue-env` (mode 600). Hooks source this file at runtime — no shell profile changes needed.
+Windows (PowerShell):
+```powershell
+$root = if ($env:PLUGIN_ROOT) { $env:PLUGIN_ROOT } else { $env:CLAUDE_PLUGIN_ROOT }
+& "$root\scripts\setup.ps1" $ROGUE_API_KEY "<EMAIL>" "<NAME>" "codex_cli"
+```
+
+This writes `~/.rogue-env` / `%USERPROFILE%\.rogue-env` (locked to the user). Hooks read it at runtime — no shell profile changes needed.
 
 ## Step 6: Trust the hooks (REQUIRED for Codex)
 

@@ -5,8 +5,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "( nohup bash \"${CLAUDE_PLUGIN_ROOT}/scripts/heartbeat.sh\" >/dev/null 2>&1 & )",
-            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','%CLAUDE_PLUGIN_ROOT%\\scripts\\heartbeat.ps1' -WindowStyle Hidden\"",
+            "command": "( nohup bash \"${PLUGIN_ROOT:-$CLAUDE_PLUGIN_ROOT}/scripts/heartbeat.sh\" >/dev/null 2>&1 & )",
+            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','%PLUGIN_ROOT%\\scripts\\heartbeat.ps1' -WindowStyle Hidden\"",
             "timeout": 5
           }
         ]
@@ -15,8 +15,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/warn.sh\" || true",
-            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%CLAUDE_PLUGIN_ROOT%\\scripts\\warn.ps1\"",
+            "command": "bash \"${PLUGIN_ROOT:-$CLAUDE_PLUGIN_ROOT}/scripts/warn.sh\" || true",
+            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%PLUGIN_ROOT%\\scripts\\warn.ps1\"",
             "timeout": 5
           }
         ]
@@ -25,8 +25,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" SessionStart || echo '{}'",
-            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%CLAUDE_PLUGIN_ROOT%\\scripts\\hook.ps1\" SessionStart",
+            "command": "bash \"${PLUGIN_ROOT:-$CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" SessionStart || echo '{}'",
+            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%PLUGIN_ROOT%\\scripts\\hook.ps1\" SessionStart",
             "timeout": 10
           }
         ]
@@ -37,8 +37,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" UserPromptSubmit || echo '{}'",
-            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%CLAUDE_PLUGIN_ROOT%\\scripts\\hook.ps1\" UserPromptSubmit",
+            "command": "bash \"${PLUGIN_ROOT:-$CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" UserPromptSubmit || echo '{}'",
+            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%PLUGIN_ROOT%\\scripts\\hook.ps1\" UserPromptSubmit",
             "timeout": 10
           }
         ]
@@ -50,8 +50,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" PreToolUse || echo '{}'",
-            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%CLAUDE_PLUGIN_ROOT%\\scripts\\hook.ps1\" PreToolUse",
+            "command": "bash \"${PLUGIN_ROOT:-$CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" PreToolUse || echo '{}'",
+            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%PLUGIN_ROOT%\\scripts\\hook.ps1\" PreToolUse",
             "timeout": 10
           }
         ]
@@ -63,8 +63,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" PermissionRequest || echo '{}'",
-            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%CLAUDE_PLUGIN_ROOT%\\scripts\\hook.ps1\" PermissionRequest",
+            "command": "bash \"${PLUGIN_ROOT:-$CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" PermissionRequest || echo '{}'",
+            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%PLUGIN_ROOT%\\scripts\\hook.ps1\" PermissionRequest",
             "timeout": 10
           }
         ]
@@ -76,8 +76,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" PostToolUse || echo '{}'",
-            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%CLAUDE_PLUGIN_ROOT%\\scripts\\hook.ps1\" PostToolUse",
+            "command": "bash \"${PLUGIN_ROOT:-$CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" PostToolUse || echo '{}'",
+            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%PLUGIN_ROOT%\\scripts\\hook.ps1\" PostToolUse",
             "timeout": 10
           }
         ]
@@ -88,8 +88,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" Stop || echo '{}'",
-            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%CLAUDE_PLUGIN_ROOT%\\scripts\\hook.ps1\" Stop",
+            "command": "bash \"${PLUGIN_ROOT:-$CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" Stop || echo '{}'",
+            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%PLUGIN_ROOT%\\scripts\\hook.ps1\" Stop",
             "timeout": 10
           }
         ]
@@ -100,8 +100,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" PreCompact || echo '{}'",
-            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%CLAUDE_PLUGIN_ROOT%\\scripts\\hook.ps1\" PreCompact",
+            "command": "bash \"${PLUGIN_ROOT:-$CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" PreCompact || echo '{}'",
+            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%PLUGIN_ROOT%\\scripts\\hook.ps1\" PreCompact",
             "timeout": 10
           }
         ]
@@ -112,8 +112,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" PostCompact || echo '{}'",
-            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%CLAUDE_PLUGIN_ROOT%\\scripts\\hook.ps1\" PostCompact",
+            "command": "bash \"${PLUGIN_ROOT:-$CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" PostCompact || echo '{}'",
+            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%PLUGIN_ROOT%\\scripts\\hook.ps1\" PostCompact",
             "timeout": 10
           }
         ]
@@ -124,8 +124,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" SubagentStart || echo '{}'",
-            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%CLAUDE_PLUGIN_ROOT%\\scripts\\hook.ps1\" SubagentStart",
+            "command": "bash \"${PLUGIN_ROOT:-$CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" SubagentStart || echo '{}'",
+            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%PLUGIN_ROOT%\\scripts\\hook.ps1\" SubagentStart",
             "timeout": 10
           }
         ]
@@ -136,8 +136,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" SubagentStop || echo '{}'",
-            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%CLAUDE_PLUGIN_ROOT%\\scripts\\hook.ps1\" SubagentStop",
+            "command": "bash \"${PLUGIN_ROOT:-$CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" SubagentStop || echo '{}'",
+            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%PLUGIN_ROOT%\\scripts\\hook.ps1\" SubagentStop",
             "timeout": 10
           }
         ]

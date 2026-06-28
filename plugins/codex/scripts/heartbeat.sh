@@ -7,6 +7,10 @@
 # blocks Codex, never affects allow/deny, exits 0 on every path.
 set -u
 
+# Codex sets PLUGIN_ROOT (native) + CLAUDE_PLUGIN_ROOT (compat alias). Normalize
+# the alias from the native var so internal refs survive an alias drop.
+: "${CLAUDE_PLUGIN_ROOT:=${PLUGIN_ROOT:-}}"
+
 # Same env precedence as hook.sh (later wins): bundled → MDM → per-user.
 [ -r "${CLAUDE_PLUGIN_ROOT:-}/env" ] && . "${CLAUDE_PLUGIN_ROOT}/env"
 [ -r /etc/rogue/env ]                && . /etc/rogue/env
