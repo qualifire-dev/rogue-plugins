@@ -20,9 +20,11 @@ If they don't have one, direct them to generate one at: https://app.rogue.securi
 
 ## Step 3: Validate the API key
 
-Run this command to validate (replace `<KEY>` with the actual key):
+Read the key into a shell variable first (don't paste the literal key into the
+command — it would leak into shell history and process listings), then validate:
 ```bash
-curl -s -o /dev/null -w "%{http_code}" -H "x-rogue-api-key: <KEY>" https://api.rogue.security/api/v1/hooks/ping
+read -rs ROGUE_API_KEY   # paste the key at the prompt; not echoed, not in history
+curl -s -o /dev/null -w "%{http_code}" -H "x-rogue-api-key: $ROGUE_API_KEY" https://api.rogue.security/api/v1/hooks/ping
 ```
 
 If the response is not `200`, tell the user the key is invalid and ask them to try again.

@@ -61,7 +61,11 @@ done
 # we also ship a versionless tarball so /releases/latest/download URLs are stable
 # (used by compiled-key MDM bundles and any download-based install).
 if [ -d "plugins/codex" ]; then
-  CODEX_VERSION=$(python3 -c "import json; print(json.load(open('plugins/codex/.codex-plugin/plugin.json'))['version'])" 2>/dev/null || echo "unknown")
+  # Fail hard: the manifest is the version source of truth, and release.yml uploads
+  # every dist/*.tar.gz — a missing/malformed manifest must not ship as "unknown".
+  CODEX_VERSION=$(python3 -c "import json; print(json.load(open('plugins/codex/.codex-plugin/plugin.json'))['version'])") || {
+    echo "✗ unable to read plugins/codex/.codex-plugin/plugin.json" >&2; exit 1
+  }
   echo "→ codex plugin version: $CODEX_VERSION"
   for OS in $OS_MATRIX; do
     STAGE=$(mktemp -d)

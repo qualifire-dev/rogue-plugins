@@ -37,7 +37,9 @@ if ($envDir -and -not (Test-Path $envDir)) {
 }
 Set-Content -Path $EnvFile -Value $envLines -Encoding UTF8
 
-# Restrict the file to the current user only (best-effort, mirrors chmod 600).
+# Restrict the file to the current user only (mirrors chmod 600). If this fails the
+# API key would be left readable with inherited perms — delete it and fail rather
+# than print OK on an exposed secret.
 try {
     $acl = Get-Acl $EnvFile
     $acl.SetAccessRuleProtection($true, $false)
@@ -46,7 +48,12 @@ try {
         'FullControl', 'Allow')
     $acl.SetAccessRule($rule)
     Set-Acl $EnvFile $acl
-} catch {}
+} catch {
+    $err = $_.Exception.Message
+    Remove-Item -LiteralPath $EnvFile -Force -ErrorAction SilentlyContinue
+    Write-Error "Failed to restrict permissions on $EnvFile : $err"
+    exit 1
+}
 
 Write-Output "OK"
 Write-Output "ENV_FILE=$EnvFile"

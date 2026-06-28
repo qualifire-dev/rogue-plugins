@@ -28,18 +28,20 @@ CURSOR_INSTALLER="${ROGUE_CURSOR_INSTALLER_URL:-https://raw.githubusercontent.co
 ONLY=""; SKIP=""; LIST=0; DRY=0; FORCE=0; NONINT="${ROGUE_NON_INTERACTIVE:-0}"
 API_KEY="${ROGUE_API_KEY:-}"; ACTOR_EMAIL="${ROGUE_ACTOR_EMAIL:-}"; ACTOR_NAME="${ROGUE_ACTOR_NAME:-}"
 
+need_value() { [ $# -ge 2 ] || { echo "missing value for $1" >&2; exit 2; }; }
+
 while [ $# -gt 0 ]; do
   case "$1" in
-    --only) ONLY="$2"; shift 2 ;;
-    --skip) SKIP="$2"; shift 2 ;;
+    --only) need_value "$@"; ONLY="$2"; shift 2 ;;
+    --skip) need_value "$@"; SKIP="$2"; shift 2 ;;
     --list) LIST=1; shift ;;
     --dry-run) DRY=1; shift ;;
     --force) FORCE=1; shift ;;
     --non-interactive) NONINT=1; shift ;;
-    --api-key) API_KEY="$2"; shift 2 ;;
-    --actor-email) ACTOR_EMAIL="$2"; shift 2 ;;
-    --actor-name) ACTOR_NAME="$2"; shift 2 ;;
-    --base-url) BASE_URL="$2"; shift 2 ;;
+    --api-key) need_value "$@"; API_KEY="$2"; shift 2 ;;
+    --actor-email) need_value "$@"; ACTOR_EMAIL="$2"; shift 2 ;;
+    --actor-name) need_value "$@"; ACTOR_NAME="$2"; shift 2 ;;
+    --base-url) need_value "$@"; BASE_URL="$2"; shift 2 ;;
     *) echo "unknown flag: $1" >&2; exit 2 ;;
   esac
 done
@@ -106,7 +108,10 @@ fi
 [ -n "$ACTOR_NAME" ]  || ACTOR_NAME="$(git config --global user.name 2>/dev/null)"
 
 if [ -z "$API_KEY" ]; then
-  if [ "$NONINT" = 1 ] || [ ! -t 0 ]; then
+  # Probe /dev/tty, not stdin: the documented `curl … | bash` one-liner pipes the
+  # script into stdin, so `-t 0` is always false and would wrongly abort even when
+  # a terminal is attached.
+  if [ "$NONINT" = 1 ] || ! [ -r /dev/tty ]; then
     say "✗ No API key (set ROGUE_API_KEY or --api-key). Aborting." >&2; exit 1
   fi
   printf 'Rogue API key (rsk_...): ' >&2

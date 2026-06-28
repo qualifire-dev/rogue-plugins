@@ -110,13 +110,19 @@ function Write-EnvFile {
     )
     if ($BaseUrl -ne 'https://api.rogue.security') { $lines += "export ROGUE_BASE_URL=$(Format-EnvVal $BaseUrl)" }
     Set-Content -Path $EnvFile -Value $lines -Encoding UTF8
+    # Lock the credential file to the current user. If this fails, the API key would
+    # be left readable with inherited permissions — delete it and fail loudly rather
+    # than report success on an exposed secret.
     try {
         $acl = Get-Acl $EnvFile
         $acl.SetAccessRuleProtection($true, $false)
         $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
             [System.Security.Principal.WindowsIdentity]::GetCurrent().Name, 'FullControl', 'Allow')
         $acl.SetAccessRule($rule); Set-Acl $EnvFile $acl
-    } catch {}
+    } catch {
+        Remove-Item -LiteralPath $EnvFile -Force -ErrorAction SilentlyContinue
+        throw "Failed to restrict permissions on $EnvFile : $($_.Exception.Message)"
+    }
 }
 if ($DryRun) { Say "  [dry-run] write $EnvFile" } else { Write-EnvFile; Say "✓ wrote $EnvFile" }
 
@@ -153,8 +159,25 @@ foreach ($id in $active) {
                 Say "  ! Codex skips untrusted hooks - open /hooks in Codex and trust the Rogue entries once."
             }
             'cursor' {
-                if ($DryRun) { Say "  [dry-run] iex (irm '$CursorInstaller')" }
-                else { $env:ROGUE_NON_INTERACTIVE = '1'; Invoke-Expression (Invoke-RestMethod -Uri $CursorInstaller) }
+                # Download to a temp file and run it as a CHILD process. Running the
+                # installer via iex/Invoke-Expression executes it in-process, so an
+                # `exit` inside it would kill THIS dispatcher and skip the remaining
+                # agents + fail-soft handling.
+                if ($DryRun) { Say "  [dry-run] download + run $CursorInstaller" }
+                else {
+                    $tmp = Join-Path ([IO.Path]::GetTempPath()) ("rogue-cursor-install-{0}.ps1" -f [guid]::NewGuid())
+                    $prev = $env:ROGUE_NON_INTERACTIVE
+                    try {
+                        Invoke-WebRequest -Uri $CursorInstaller -OutFile $tmp -UseBasicParsing -TimeoutSec 30
+                        $env:ROGUE_NON_INTERACTIVE = '1'
+                        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $tmp
+                        if ($LASTEXITCODE -ne 0) { throw "cursor installer exited $LASTEXITCODE" }
+                    } finally {
+                        if ($null -eq $prev) { Remove-Item Env:ROGUE_NON_INTERACTIVE -ErrorAction SilentlyContinue }
+                        else { $env:ROGUE_NON_INTERACTIVE = $prev }
+                        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+                    }
+                }
             }
         }
     } catch { Say "  x $id failed: $($_.Exception.Message)"; $rc = 1 }

@@ -40,11 +40,14 @@ If no sources are found OR `ROGUE_API_KEY` is empty: individual users run
 PJ=$(find "$HOME/.codex/plugins" -path '*rogue*/.codex-plugin/plugin.json' 2>/dev/null | head -1)
 VER=$(grep -oE '"version"[[:space:]]*:[[:space:]]*"[0-9][^"]*"' "$PJ" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
 SURFACE="${ROGUE_CODEX_SURFACE:-codex_cli}"
+# Escape backslash + double-quote so an actor name/email with a " or \ (from git
+# config) can't produce invalid JSON — mirrors scripts/heartbeat.sh.
+esc() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
 curl -s -w "\n%{http_code}" -X POST \
   "${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/status" \
   -H "x-rogue-api-key: $ROGUE_API_KEY" \
   -H "Content-Type: application/json" \
-  -d "{\"agent_family\":\"openai\",\"agent\":\"$SURFACE\",\"version\":\"${VER:-unknown}\",\"host\":\"$(hostname)\",\"actor_email\":\"${ROGUE_ACTOR_EMAIL:-}\",\"actor_name\":\"${ROGUE_ACTOR_NAME:-}\"}"
+  -d "{\"agent_family\":\"openai\",\"agent\":\"$SURFACE\",\"version\":\"${VER:-unknown}\",\"host\":\"$(esc "$(hostname)")\",\"actor_email\":\"$(esc "${ROGUE_ACTOR_EMAIL:-}")\",\"actor_name\":\"$(esc "${ROGUE_ACTOR_NAME:-}")\"}"
 ```
 
 Report from the JSON response (HTTP 200 = connected): organization name, running

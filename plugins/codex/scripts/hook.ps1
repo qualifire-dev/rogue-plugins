@@ -102,10 +102,10 @@ foreach ($k in 'ROGUE_API_KEY','ROGUE_ACTOR_EMAIL','ROGUE_ACTOR_NAME','ROGUE_BAS
 
 $apiKey = $creds['ROGUE_API_KEY']
 if (-not $apiKey) {
+    # warn.ps1 owns the SessionStart "Not configured" systemMessage (a separate
+    # hooks.json entry fires it), so stay silent here to avoid a double banner.
     Log "outcome=unconfigured"
-    if ($EventName -eq 'SessionStart') {
-        Write-Raw '{"systemMessage": "[Rogue Security] Not configured. Run /rogue:setup to connect your API key."}'
-    } else { Write-Raw '{}' }
+    Write-Raw '{}'
     exit 0
 }
 
