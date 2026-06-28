@@ -12,7 +12,7 @@ param(
     [string]$Skip = '',
     [switch]$List,
     [switch]$DryRun,
-    [switch]$Force,
+    [switch]$Force,   # ignore the on-disk key and re-collect credentials (per-agent install always re-runs, idempotent)
     [switch]$NonInteractive,
     [string]$ApiKey   = $env:ROGUE_API_KEY,
     [string]$ActorEmail = $env:ROGUE_ACTOR_EMAIL,
@@ -67,7 +67,7 @@ function ConvertFrom-ShellQuoted { param([string]$Val)
     if ($Val.StartsWith("'") -and $Val.EndsWith("'")) { return $Val.Substring(1, $Val.Length-2).Replace("'\''","'") }
     return $Val
 }
-if (-not $ApiKey -and (Test-Path -LiteralPath $EnvFile)) {
+if (-not $ApiKey -and -not $Force -and (Test-Path -LiteralPath $EnvFile)) {
     foreach ($line in (Get-Content -LiteralPath $EnvFile)) {
         if ($line -match '^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)=(.+)$') {
             $k = $Matches[1]; $v = ConvertFrom-ShellQuoted $Matches[2]
@@ -121,7 +121,24 @@ function Write-EnvFile {
 if ($DryRun) { Say "  [dry-run] write $EnvFile" } else { Write-EnvFile; Say "✓ wrote $EnvFile" }
 
 # ── per-agent install (fail-soft) ──────────────────────────────────────────
-function Run { param([string]$Cmd) if ($DryRun) { Say "  [dry-run] $Cmd" } else { Invoke-Expression $Cmd } }
+# Native CLIs (claude/codex) return a nonzero EXIT CODE on failure; they do NOT
+# throw. So check $LASTEXITCODE explicitly after each and throw to mark failure.
+function Invoke-Cli {
+    param([string]$Exe, [string[]]$CliArgs, [switch]$AllowFail)
+    if ($DryRun) { Say "  [dry-run] $Exe $($CliArgs -join ' ')"; return $true }
+    & $Exe @CliArgs
+    $ok = ($LASTEXITCODE -eq 0)
+    if (-not $ok -and -not $AllowFail) { throw "$Exe $($CliArgs -join ' ') exited $LASTEXITCODE" }
+    return $ok
+}
+function Install-MarketplacePlugin {
+    param([string]$Exe)
+    # add; on failure (already present) fall back to update — mirrors install-all.sh.
+    if (-not (Invoke-Cli $Exe @('plugin','marketplace','add',$Repo) -AllowFail)) {
+        Invoke-Cli $Exe @('plugin','marketplace','update',$Repo) -AllowFail | Out-Null
+    }
+    Invoke-Cli $Exe @('plugin','install','rogue@rogue-marketplace') | Out-Null
+}
 
 $rc = 0
 Say ''
@@ -130,15 +147,14 @@ foreach ($id in $active) {
     Say "-> $id"
     try {
         switch ($id) {
-            'claude' {
-                Run "claude plugin marketplace add $Repo 2>`$null; claude plugin install rogue@rogue-marketplace"
-            }
-            'codex' {
-                Run "codex plugin marketplace add $Repo 2>`$null; codex plugin install rogue@rogue-marketplace"
+            'claude' { Install-MarketplacePlugin 'claude' }
+            'codex'  {
+                Install-MarketplacePlugin 'codex'
                 Say "  ! Codex skips untrusted hooks - open /hooks in Codex and trust the Rogue entries once."
             }
             'cursor' {
-                Run "`$env:ROGUE_NON_INTERACTIVE='1'; iex (irm '$CursorInstaller')"
+                if ($DryRun) { Say "  [dry-run] iex (irm '$CursorInstaller')" }
+                else { $env:ROGUE_NON_INTERACTIVE = '1'; Invoke-Expression (Invoke-RestMethod -Uri $CursorInstaller) }
             }
         }
     } catch { Say "  x $id failed: $($_.Exception.Message)"; $rc = 1 }

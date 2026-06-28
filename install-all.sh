@@ -13,7 +13,9 @@
 #   --skip a,b      skip these agent ids
 #   --list          detect + show status, install nothing
 #   --dry-run       print what would happen, change nothing
-#   --force         reinstall even if already present
+#   --force         ignore the on-disk key and re-collect credentials; the
+#                   per-agent install (marketplace add/update + install) always
+#                   re-runs and is idempotent, so this also refreshes the plugin
 #   --non-interactive   never prompt (requires key in env/file)
 #   --api-key K --actor-email E --actor-name N --base-url U
 set -u
@@ -91,8 +93,8 @@ if [ "$LIST" = 1 ]; then exit 0; fi
 if [ -z "${ACTIVE// /}" ]; then say "No supported agents selected. Nothing to do."; exit 0; fi
 
 # ── credentials (collect ONCE; shared ~/.rogue-env) ────────────────────────
-# Reuse an existing key on disk unless --force.
-if [ -z "$API_KEY" ] && [ -r "$ENV_FILE" ]; then
+# Reuse an existing key on disk unless --force (which forces a credential refresh).
+if [ -z "$API_KEY" ] && [ "$FORCE" != 1 ] && [ -r "$ENV_FILE" ]; then
   # shellcheck disable=SC1090
   . "$ENV_FILE" 2>/dev/null || true
   API_KEY="${ROGUE_API_KEY:-$API_KEY}"

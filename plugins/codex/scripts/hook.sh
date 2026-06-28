@@ -38,23 +38,29 @@ SURFACE="${ROGUE_CODEX_SURFACE:-codex_cli}"
 
 URL="${ROGUE_API_URL:-${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/openai}"
 
-RESP=$(curl -sS -X POST "$URL" \
+# Capture body + HTTP status. -w appends a final line "<code>"; on any curl/transport
+# failure curl exits non-zero and the code is 000. We relay the body ONLY on a clean
+# HTTP 200 so an error page (401/404/500) is never handed to Codex as a hook decision.
+RAW=$(curl -sS -X POST "$URL" \
   -H "x-rogue-api-key: $ROGUE_API_KEY" \
   -H "x-rogue-event: $EVENT" \
   -H "x-rogue-agent: $SURFACE" \
   -H "x-rogue-actor-email: $ROGUE_ACTOR_EMAIL" \
   -H "x-rogue-actor-name: $ROGUE_ACTOR_NAME" \
   -H 'Content-Type: application/json' \
-  --data-binary @- --max-time 8 || echo '{}')
+  --data-binary @- --max-time 8 -w '\n%{http_code}')
+RC=$?
+CODE=$(printf '%s' "$RAW" | tail -n1)
+BODY=$(printf '%s' "$RAW" | sed '$d')
 
-log "raw=$(sanitize "$RESP" | head -c 400)"
+log "outcome_raw=$(sanitize "$BODY" | head -c 400) http=$CODE rc=$RC"
 
-# Fail-open: never break a Codex session on a transport error.
-if [ -z "$RESP" ]; then
-  log "outcome=allow empty"
+# Fail-open on transport error or any non-200: emit a clean allow.
+if [ "$RC" -ne 0 ] || [ "$CODE" != "200" ] || [ -z "$BODY" ]; then
+  log "outcome=allow http=$CODE rc=$RC"
   echo '{}'
   exit 0
 fi
 
 # rogue-api already returns the correct native Codex shape; relay it verbatim.
-printf '%s' "$RESP"
+printf '%s' "$BODY"
