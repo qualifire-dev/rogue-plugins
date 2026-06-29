@@ -25,6 +25,10 @@
 # CLI flags (equivalent to the env knobs; pass after `bash -s --`):
 #   curl -fsSL .../install.sh | bash -s -- --api-key="rg_xxx" --non-interactive
 #
+#   --claude               install only for Claude Code (repeatable with the others)
+#   --codex                install only for OpenAI Codex
+#   --cursor               install only for Cursor
+#                          (no agent flag = auto-detect and install for every agent found)
 #   --api-key=KEY          same as ROGUE_API_KEY
 #   --actor-email=EMAIL    same as ROGUE_ACTOR_EMAIL
 #   --actor-name=NAME      same as ROGUE_ACTOR_NAME
@@ -50,6 +54,8 @@ SETTINGS_PATH="$CONFIG_DIR/settings.json"
 ENV_FILE="${ROGUE_ENV_FILE:-$HOME/.rogue-env}"
 
 NON_INTERACTIVE="${ROGUE_NON_INTERACTIVE:-0}"
+# Explicit agent selection via --claude/--codex/--cursor. Empty = auto-detect all.
+WANT=""
 # Bind the controlling terminal to fd 3 once, so prompts work even under
 # `curl | bash` (where stdin is the script, not the keyboard). If /dev/tty
 # can't be opened (no terminal, or a sandbox that reports "Device not
@@ -467,6 +473,9 @@ parse_args() {
       --actor-name)      [ -n "$val" ] || { val="$2"; shift; }; ROGUE_ACTOR_NAME="$val" ;;
       --plugin-repo)     [ -n "$val" ] || { val="$2"; shift; }; ROGUE_PLUGIN_REPO="$val" ;;
       --base-url)        [ -n "$val" ] || { val="$2"; shift; }; ROGUE_BASE_URL="$val" ;;
+      --claude)          WANT="$WANT claude" ;;
+      --codex)           WANT="$WANT codex" ;;
+      --cursor)          WANT="$WANT cursor" ;;
       --non-interactive) NON_INTERACTIVE=1 ;;
       --no-statusline)   ROGUE_NO_STATUSLINE=1 ;;
       -h|--help)         usage; exit 0 ;;
@@ -480,13 +489,27 @@ parse_args() {
 main() {
   parse_args "$@"
 
-  # Detect every supported agent. claude/codex ship a CLI on PATH; Cursor's
-  # `cursor` shell command is opt-in, so also accept the presence of ~/.cursor.
-  agents=""
-  have_cmd claude && agents="$agents claude"
-  have_cmd codex  && agents="$agents codex"
-  { have_cmd cursor || [ -d "$HOME/.cursor" ]; } && agents="$agents cursor"
-  [ -n "$agents" ] || die "No supported coding agent found (looked for: claude, codex, cursor). Install Claude Code (https://claude.com/code), OpenAI Codex, or Cursor (https://cursor.com) first."
+  if [ -n "$WANT" ]; then
+    # Explicit selection (--claude/--codex/--cursor): install exactly these. A CLI
+    # agent still needs its binary (can't add a marketplace without it); Cursor is a
+    # plain file copy, so it installs regardless of detection.
+    agents="$WANT"
+    for a in $agents; do
+      case "$a" in
+        claude) have_cmd claude || die "--claude requested but the 'claude' CLI is not on PATH. Install Claude Code (https://claude.com/code) first." ;;
+        codex)  have_cmd codex  || die "--codex requested but the 'codex' CLI is not on PATH. Install OpenAI Codex first." ;;
+        cursor) : ;;
+      esac
+    done
+  else
+    # Auto-detect every supported agent. claude/codex ship a CLI on PATH; Cursor's
+    # `cursor` shell command is opt-in, so also accept the presence of ~/.cursor.
+    agents=""
+    have_cmd claude && agents="$agents claude"
+    have_cmd codex  && agents="$agents codex"
+    { have_cmd cursor || [ -d "$HOME/.cursor" ]; } && agents="$agents cursor"
+    [ -n "$agents" ] || die "No supported coding agent found (looked for: claude, codex, cursor). Install Claude Code (https://claude.com/code), OpenAI Codex, or Cursor (https://cursor.com) first."
+  fi
 
   # Credentials once — every plugin reads the shared ~/.rogue-env.
   configure_credentials

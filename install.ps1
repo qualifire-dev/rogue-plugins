@@ -31,6 +31,12 @@
     Marketplace source repo (default: qualifire-dev/rogue-plugins).
 .PARAMETER NonInteractive
     Fail / skip prompts rather than ask for missing values.
+.PARAMETER Claude
+    Install only for Claude Code (combine with -Codex/-Cursor to pick a set).
+.PARAMETER Codex
+    Install only for OpenAI Codex.
+.PARAMETER Cursor
+    Install only for Cursor. With no agent switch, every detected agent is installed.
 #>
 [CmdletBinding()]
 param(
@@ -39,7 +45,10 @@ param(
     [string]$Name,
     [string]$BaseUrl,
     [string]$PluginRepo,
-    [switch]$NonInteractive
+    [switch]$NonInteractive,
+    [switch]$Claude,
+    [switch]$Codex,
+    [switch]$Cursor
 )
 
 $ErrorActionPreference = 'Stop'
@@ -70,13 +79,28 @@ try {
 Write-Host ""
 Write-Host "Rogue Security (Windows)" -ForegroundColor Cyan
 
-# Detect every supported agent; at least one is required. claude/codex ship a CLI
-# on PATH; Cursor's `cursor` command is opt-in, so also accept %USERPROFILE%\.cursor.
-$hasClaude = [bool](Get-Command claude -ErrorAction SilentlyContinue)
-$hasCodex  = [bool](Get-Command codex  -ErrorAction SilentlyContinue)
-$hasCursor = [bool](Get-Command cursor -ErrorAction SilentlyContinue) -or (Test-Path (Join-Path $env:USERPROFILE '.cursor'))
-if (-not ($hasClaude -or $hasCodex -or $hasCursor)) {
-    Die "No supported coding agent found (looked for: claude, codex, cursor). Install Claude Code (https://claude.com/code), OpenAI Codex, or Cursor (https://cursor.com) first."
+# Agent selection. -Claude/-Codex/-Cursor pick an explicit set; with none, auto-detect
+# every supported agent. claude/codex ship a CLI on PATH; Cursor's `cursor` command is
+# opt-in, so detection also accepts %USERPROFILE%\.cursor. An explicitly selected CLI
+# agent still needs its binary; Cursor is a plain file copy, so it installs regardless.
+$explicit = $Claude -or $Codex -or $Cursor
+if ($explicit) {
+    $hasClaude = [bool]$Claude
+    $hasCodex  = [bool]$Codex
+    $hasCursor = [bool]$Cursor
+    if ($hasClaude -and -not (Get-Command claude -ErrorAction SilentlyContinue)) {
+        Die "-Claude requested but the 'claude' CLI is not on PATH. Install Claude Code (https://claude.com/code) first."
+    }
+    if ($hasCodex -and -not (Get-Command codex -ErrorAction SilentlyContinue)) {
+        Die "-Codex requested but the 'codex' CLI is not on PATH. Install OpenAI Codex first."
+    }
+} else {
+    $hasClaude = [bool](Get-Command claude -ErrorAction SilentlyContinue)
+    $hasCodex  = [bool](Get-Command codex  -ErrorAction SilentlyContinue)
+    $hasCursor = [bool](Get-Command cursor -ErrorAction SilentlyContinue) -or (Test-Path (Join-Path $env:USERPROFILE '.cursor'))
+    if (-not ($hasClaude -or $hasCodex -or $hasCursor)) {
+        Die "No supported coding agent found (looked for: claude, codex, cursor). Install Claude Code (https://claude.com/code), OpenAI Codex, or Cursor (https://cursor.com) first."
+    }
 }
 # Claude shells out to git to clone the marketplace; git is required only for it.
 if ($hasClaude -and -not (Get-Command git -ErrorAction SilentlyContinue)) {

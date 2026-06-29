@@ -36,6 +36,13 @@ Codex install through their native plugin CLIs (`claude plugin install` /
 writes your API key, confirms your actor identity, and on macOS/Linux configures a
 `Rogue Security` status badge below the Claude prompt (🟢 connected / 🔴 not set up).
 
+To target specific agents instead of all detected ones, pass `--claude`, `--codex`,
+and/or `--cursor` (PowerShell: `-Claude` / `-Codex` / `-Cursor`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/qualifire-dev/rogue-plugins/main/install.sh | bash -s -- --cursor
+```
+
 For org-wide Cursor rollout, import this repo as a Cursor **Team Marketplace**
 (Dashboard → marketplaces) — that is Cursor's native managed/auto-update path, separate
 from the per-developer one-liner above.
