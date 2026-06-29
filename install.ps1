@@ -208,9 +208,10 @@ if ($hasCodex) {
         else { Warn2 'Could not add or update Codex marketplace (continuing - it may already be present).' }
     }
     Log "Installing plugin $PluginName@$MarketplaceName"
+    # Codex uses `plugin add` (not `install`); idempotent re-add is fine.
     $installed = $false
-    try { & codex plugin install "$PluginName@$MarketplaceName" 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) { $installed = $true } } catch {}
-    if (-not $installed) { Die "codex plugin install failed. Run 'codex plugin install $PluginName@$MarketplaceName' to see the error." }
+    try { & codex plugin add "$PluginName@$MarketplaceName" 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) { $installed = $true } } catch {}
+    if (-not $installed) { Die "codex plugin add failed. Run 'codex plugin add $PluginName@$MarketplaceName' to see the error." }
     Ok 'Plugin installed'
     Warn2 'Codex skips untrusted hooks - open /hooks in Codex and trust the Rogue entries once.'
 }

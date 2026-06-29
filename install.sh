@@ -151,10 +151,11 @@ codex_install_plugin() {
   fi
 
   note "Installing plugin ${C_DIM}${PLUGIN_NAME}@${MARKETPLACE_NAME}${C_RESET}"
-  if codex plugin install "${PLUGIN_NAME}@${MARKETPLACE_NAME}" >/dev/null 2>&1; then
+  # Codex uses `plugin add` (not `install`); idempotent re-add is fine.
+  if codex plugin add "${PLUGIN_NAME}@${MARKETPLACE_NAME}" >/dev/null 2>&1; then
     ok "Plugin installed"
   else
-    die "codex plugin install failed. Run 'codex plugin install ${PLUGIN_NAME}@${MARKETPLACE_NAME}' to see the error."
+    die "codex plugin add failed. Run 'codex plugin add ${PLUGIN_NAME}@${MARKETPLACE_NAME}' to see the error."
   fi
 }
 
