@@ -259,22 +259,27 @@ if ($hasCursor) {
     }
     $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("rogue-cursor-" + [System.IO.Path]::GetRandomFileName())
     New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+    # Non-fatal: Cursor is detected from %USERPROFILE%\.cursor (present for nearly
+    # every developer), so a missing release asset or download error must NOT abort
+    # the run and break the Claude/Codex installs above. Warn and continue.
     try {
         Log "Downloading plugin $asset"
         $tarball = Join-Path $tmp 'p.tar.gz'
         Invoke-WebRequest -Uri $url -OutFile $tarball -UseBasicParsing -TimeoutSec 60 -ErrorAction Stop
         & tar -xzf $tarball -C $tmp
-        if ($LASTEXITCODE -ne 0) { Die "Could not extract the Cursor plugin tarball (is 'tar' available?)." }
+        if ($LASTEXITCODE -ne 0) { throw "Could not extract the Cursor plugin tarball (is 'tar' available?)." }
         $src = Get-ChildItem -Path $tmp -Recurse -Directory -Filter 'cursor' |
             Where-Object { Test-Path (Join-Path $_.FullName '.cursor-plugin\plugin.json') } |
             Select-Object -First 1
-        if (-not $src) { Die "Cursor plugin manifest missing in download." }
+        if (-not $src) { throw "Cursor plugin manifest missing in download." }
         $dest = Join-Path $env:USERPROFILE '.cursor\plugins\local\rogue'
         if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
         New-Item -ItemType Directory -Path $dest -Force | Out-Null
         Copy-Item -Recurse -Force (Join-Path $src.FullName '*') $dest
         Ok "Plugin installed -> $dest"
         Warn2 'Fully quit and reopen Cursor, then run /rogue:status to verify.'
+    } catch {
+        Warn2 "Cursor plugin not installed ($($_.Exception.Message)). If the asset isn't published yet, re-run the installer once it is."
     } finally {
         Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
     }
