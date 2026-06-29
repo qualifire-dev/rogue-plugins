@@ -1,0 +1,72 @@
+name: Validate
+
+# Catches the failure mode release.yml can't: a plugin's manifest version drifting
+# out of sync with its marketplace entry, or a malformed manifest/hooks file landing
+# on main. Runs on every push/PR — fast, no secrets, no release side effects.
+# (Ported from qualifire-dev/rogue-plugin-cursor's release-time version check and
+# generalized to all three plugins in this monorepo.)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate JSON is well-formed
+        run: |
+          set -euo pipefail
+          fail=0
+          while IFS= read -r f; do
+            if ! jq empty "$f" 2>/dev/null; then
+              echo "::error file=$f::invalid JSON"
+              fail=1
+            fi
+          done < <(git ls-files '*.json')
+          [ "$fail" = 0 ] || exit 1
+
+      - name: Plugin version <-> marketplace version in sync
+        run: |
+          set -euo pipefail
+          # plugin_manifest | marketplace_manifest | source-path key
+          rows="
+          plugins/rogue/.claude-plugin/plugin.json|.claude-plugin/marketplace.json|./plugins/rogue
+          plugins/codex/.codex-plugin/plugin.json|.agents/plugins/marketplace.json|./plugins/codex
+          plugins/cursor/.cursor-plugin/plugin.json|.cursor-plugin/marketplace.json|./plugins/cursor
+          "
+          fail=0
+          echo "$rows" | while IFS='|' read -r plugin market src; do
+            [ -n "${plugin:-}" ] || continue
+            [ -f "$plugin" ] || { echo "::error::missing $plugin"; exit 1; }
+            [ -f "$market" ] || { echo "::error::missing $market"; exit 1; }
+            pv=$(jq -r '.version' "$plugin")
+            mv=$(jq -r --arg s "$src" '.plugins[] | select(.source == $s) | .version' "$market")
+            if [ -z "$mv" ] || [ "$mv" = "null" ]; then
+              echo "::error file=$market::no plugin entry with source $src"; exit 1
+            fi
+            if [ "$pv" != "$mv" ]; then
+              echo "::error::version drift — $plugin ($pv) != $market entry $src ($mv)"; exit 1
+            fi
+            echo "ok: $src @ $pv"
+          done
+
+      - name: Shell scripts parse
+        run: |
+          set -euo pipefail
+          # Parse each script with the interpreter its shebang names: the runtime
+          # hook dispatchers are POSIX sh (validate under dash), while install.sh /
+          # build-release.sh are bash (arrays, RETURN traps). Wrong parser = false fail.
+          fail=0
+          while IFS= read -r f; do
+            if head -1 "$f" | grep -q bash; then chk="bash -n"; else chk="dash -n"; fi
+            if ! $chk "$f"; then echo "::error file=$f::$chk parse error"; fail=1; fi
+          done < <(git ls-files 'plugins/**/scripts/*.sh' 'install.sh' 'scripts/*.sh')
+          [ "$fail" = 0 ] || exit 1

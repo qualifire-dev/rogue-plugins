@@ -77,6 +77,34 @@ if [ -d "plugins/codex" ]; then
   rm -rf "$CXSTAGE"
 fi
 
+# ── Cursor plugin tarball ───────────────────────────────────────────────────
+# Cursor has no plugin CLI, so the one-line installer downloads THIS tarball and
+# copies plugins/cursor/ into ~/.cursor/plugins/local/rogue. Versionless name keeps
+# the /releases/latest/download/ URL stable. Cross-platform by content (the hook is
+# python3). The Team Marketplace imports the repo directly, not this tarball.
+if [ -d "plugins/cursor" ]; then
+  CURSOR_VERSION=$(grep -oE '"version"[[:space:]]*:[[:space:]]*"[0-9][^"]*"' \
+    plugins/cursor/.cursor-plugin/plugin.json 2>/dev/null | head -1 \
+    | grep -oE '[0-9]+\.[0-9]+\.[0-9]+') && [ -n "$CURSOR_VERSION" ] || {
+    echo "✗ unable to read plugins/cursor/.cursor-plugin/plugin.json" >&2; exit 1
+  }
+  echo "→ cursor plugin version: $CURSOR_VERSION"
+  CRSTAGE=$(mktemp -d)
+  CRTOP="$CRSTAGE/rogue-plugin-cursor"
+  mkdir -p "$CRTOP/plugins" "$CRTOP/.cursor-plugin"
+  cp .cursor-plugin/marketplace.json "$CRTOP/.cursor-plugin/"
+  cp -R plugins/cursor "$CRTOP/plugins/"
+  cp README.md LICENSE "$CRTOP/" 2>/dev/null || true
+  CROUT="$DIST/rogue-plugin-cursor.tar.gz"
+  tar -czf "$CROUT" \
+    --exclude='__pycache__' \
+    --exclude='*.pyc' \
+    -C "$CRSTAGE" "rogue-plugin-cursor"
+  CRSIZE=$(wc -c < "$CROUT" | awk '{print $1}')
+  echo "✓ $CROUT  ($CRSIZE bytes, version $CURSOR_VERSION)"
+  rm -rf "$CRSTAGE"
+fi
+
 echo ""
 echo "dist/:"
 ls -la "$DIST"

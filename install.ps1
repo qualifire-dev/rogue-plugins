@@ -31,6 +31,12 @@
     Marketplace source repo (default: qualifire-dev/rogue-plugins).
 .PARAMETER NonInteractive
     Fail / skip prompts rather than ask for missing values.
+.PARAMETER Claude
+    Install only for Claude Code (combine with -Codex/-Cursor to pick a set).
+.PARAMETER Codex
+    Install only for OpenAI Codex.
+.PARAMETER Cursor
+    Install only for Cursor. With no agent switch, every detected agent is installed.
 #>
 [CmdletBinding()]
 param(
@@ -39,7 +45,10 @@ param(
     [string]$Name,
     [string]$BaseUrl,
     [string]$PluginRepo,
-    [switch]$NonInteractive
+    [switch]$NonInteractive,
+    [switch]$Claude,
+    [switch]$Codex,
+    [switch]$Cursor
 )
 
 $ErrorActionPreference = 'Stop'
@@ -70,11 +79,28 @@ try {
 Write-Host ""
 Write-Host "Rogue Security (Windows)" -ForegroundColor Cyan
 
-# Detect every supported agent on PATH; at least one is required.
-$hasClaude = [bool](Get-Command claude -ErrorAction SilentlyContinue)
-$hasCodex  = [bool](Get-Command codex  -ErrorAction SilentlyContinue)
-if (-not ($hasClaude -or $hasCodex)) {
-    Die "No supported coding agent found on PATH (looked for: claude, codex). Install Claude Code (https://claude.com/code) or OpenAI Codex first."
+# Agent selection. -Claude/-Codex/-Cursor pick an explicit set; with none, auto-detect
+# every supported agent. claude/codex ship a CLI on PATH; Cursor's `cursor` command is
+# opt-in, so detection also accepts %USERPROFILE%\.cursor. An explicitly selected CLI
+# agent still needs its binary; Cursor is a plain file copy, so it installs regardless.
+$explicit = $Claude -or $Codex -or $Cursor
+if ($explicit) {
+    $hasClaude = [bool]$Claude
+    $hasCodex  = [bool]$Codex
+    $hasCursor = [bool]$Cursor
+    if ($hasClaude -and -not (Get-Command claude -ErrorAction SilentlyContinue)) {
+        Die "-Claude requested but the 'claude' CLI is not on PATH. Install Claude Code (https://claude.com/code) first."
+    }
+    if ($hasCodex -and -not (Get-Command codex -ErrorAction SilentlyContinue)) {
+        Die "-Codex requested but the 'codex' CLI is not on PATH. Install OpenAI Codex first."
+    }
+} else {
+    $hasClaude = [bool](Get-Command claude -ErrorAction SilentlyContinue)
+    $hasCodex  = [bool](Get-Command codex  -ErrorAction SilentlyContinue)
+    $hasCursor = [bool](Get-Command cursor -ErrorAction SilentlyContinue) -or (Test-Path (Join-Path $env:USERPROFILE '.cursor'))
+    if (-not ($hasClaude -or $hasCodex -or $hasCursor)) {
+        Die "No supported coding agent found (looked for: claude, codex, cursor). Install Claude Code (https://claude.com/code), OpenAI Codex, or Cursor (https://cursor.com) first."
+    }
 }
 # Claude shells out to git to clone the marketplace; git is required only for it.
 if ($hasClaude -and -not (Get-Command git -ErrorAction SilentlyContinue)) {
@@ -214,6 +240,44 @@ if ($hasCodex) {
     if (-not $installed) { Die "codex plugin add failed. Run 'codex plugin add $PluginName@$MarketplaceName' to see the error." }
     Ok 'Plugin installed'
     Warn2 'Codex skips untrusted hooks - open /hooks in Codex and trust the Rogue entries once.'
+}
+
+# Cursor has no plugin CLI: install is a file copy into
+# %USERPROFILE%\.cursor\plugins\local\rogue. Download the release tarball, extract
+# with `tar` (bundled in Windows 10+), and copy plugins\cursor into place. The Team
+# Marketplace is the separate, admin-driven managed path; this does not touch it.
+if ($hasCursor) {
+    Write-Host ""
+    Write-Host "Rogue Security - Cursor" -ForegroundColor Cyan
+    # Cursor ships dual dispatchers (sh + PowerShell) like Claude/Codex; the runtime
+    # is the same shell stack, so no extra prerequisite check beyond tar (below).
+    $asset = 'rogue-plugin-cursor.tar.gz'
+    if ($env:ROGUE_PLUGIN_VERSION) {
+        $url = "https://github.com/$PluginRepo/releases/download/$($env:ROGUE_PLUGIN_VERSION)/$asset"
+    } else {
+        $url = "https://github.com/$PluginRepo/releases/latest/download/$asset"
+    }
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("rogue-cursor-" + [System.IO.Path]::GetRandomFileName())
+    New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+    try {
+        Log "Downloading plugin $asset"
+        $tarball = Join-Path $tmp 'p.tar.gz'
+        Invoke-WebRequest -Uri $url -OutFile $tarball -UseBasicParsing -TimeoutSec 60 -ErrorAction Stop
+        & tar -xzf $tarball -C $tmp
+        if ($LASTEXITCODE -ne 0) { Die "Could not extract the Cursor plugin tarball (is 'tar' available?)." }
+        $src = Get-ChildItem -Path $tmp -Recurse -Directory -Filter 'cursor' |
+            Where-Object { Test-Path (Join-Path $_.FullName '.cursor-plugin\plugin.json') } |
+            Select-Object -First 1
+        if (-not $src) { Die "Cursor plugin manifest missing in download." }
+        $dest = Join-Path $env:USERPROFILE '.cursor\plugins\local\rogue'
+        if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
+        New-Item -ItemType Directory -Path $dest -Force | Out-Null
+        Copy-Item -Recurse -Force (Join-Path $src.FullName '*') $dest
+        Ok "Plugin installed -> $dest"
+        Warn2 'Fully quit and reopen Cursor, then run /rogue:status to verify.'
+    } finally {
+        Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+    }
 }
 
 Write-Host @"

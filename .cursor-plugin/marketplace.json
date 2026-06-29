@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json.schemastore.org/cursor-marketplace.json",
+  "name": "rogue-marketplace",
+  "version": "1.0.0",
+  "description": "Rogue Security extensions for Cursor",
+  "owner": {
+    "name": "Rogue Security",
+    "email": "support@rogue.security",
+    "url": "https://www.rogue.security"
+  },
+  "plugins": [
+    {
+      "name": "rogue-security",
+      "version": "1.0.3",
+      "description": "Rogue Security AIDR — real-time AI agent detection and response for Cursor",
+      "author": {
+        "name": "Rogue Security",
+        "url": "https://www.rogue.security"
+      },
+      "homepage": "https://docs.rogue.security/integrations/cursor",
+      "category": "security",
+      "source": "./plugins/cursor"
+    }
+  ]
+}
