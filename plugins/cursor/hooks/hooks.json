@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "python3 ./scripts/rogue-hook.py sessionStart",
+        "timeout": 120
+      }
+    ],
+    "sessionEnd": [
+      {
+        "command": "python3 ./scripts/rogue-hook.py sessionEnd",
+        "timeout": 120
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "python3 ./scripts/rogue-hook.py beforeSubmitPrompt",
+        "timeout": 120
+      }
+    ],
+    "preToolUse": [
+      {
+        "command": "python3 ./scripts/rogue-hook.py preToolUse",
+        "timeout": 120
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "python3 ./scripts/rogue-hook.py postToolUse",
+        "timeout": 120
+      }
+    ],
+    "postToolUseFailure": [
+      {
+        "command": "python3 ./scripts/rogue-hook.py postToolUseFailure",
+        "timeout": 120
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": "python3 ./scripts/rogue-hook.py beforeShellExecution",
+        "timeout": 120
+      }
+    ],
+    "afterShellExecution": [
+      {
+        "command": "python3 ./scripts/rogue-hook.py afterShellExecution",
+        "timeout": 120
+      }
+    ],
+    "beforeMCPExecution": [
+      {
+        "command": "python3 ./scripts/rogue-hook.py beforeMCPExecution",
+        "timeout": 120
+      }
+    ],
+    "afterMCPExecution": [
+      {
+        "command": "python3 ./scripts/rogue-hook.py afterMCPExecution",
+        "timeout": 120
+      }
+    ],
+    "beforeReadFile": [
+      {
+        "command": "python3 ./scripts/rogue-hook.py beforeReadFile",
+        "timeout": 120
+      }
+    ],
+    "afterFileEdit": [
+      {
+        "command": "python3 ./scripts/rogue-hook.py afterFileEdit",
+        "timeout": 120
+      }
+    ],
+    "afterAgentResponse": [
+      {
+        "command": "python3 ./scripts/rogue-hook.py afterAgentResponse",
+        "timeout": 120
+      }
+    ],
+    "afterAgentThought": [
+      {
+        "command": "python3 ./scripts/rogue-hook.py afterAgentThought",
+        "timeout": 120
+      }
+    ],
+    "subagentStart": [
+      {
+        "command": "python3 ./scripts/rogue-hook.py subagentStart",
+        "timeout": 120
+      }
+    ],
+    "subagentStop": [
+      {
+        "command": "python3 ./scripts/rogue-hook.py subagentStop",
+        "timeout": 120
+      }
+    ],
+    "stop": [
+      {
+        "command": "python3 ./scripts/rogue-hook.py stop",
+        "timeout": 120
+      }
+    ],
+    "preCompact": [
+      {
+        "command": "python3 ./scripts/rogue-hook.py preCompact",
+        "timeout": 120
+      }
+    ]
+  }
+}

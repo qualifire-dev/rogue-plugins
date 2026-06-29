@@ -27,11 +27,18 @@ Pass credentials via environment variables before the one-liner when running non
 $env:ROGUE_API_KEY='rsk_xxx'; $env:ROGUE_ACTOR_EMAIL='you@co.com'; iwr -useb https://raw.githubusercontent.com/qualifire-dev/rogue-plugins/main/install.ps1 | iex
 ```
 
-The installer adds the marketplace and installs the plugin via the Claude CLI
-(`claude plugin marketplace add` + `claude plugin install`), validates and writes
-your API key to `~/.rogue-env` (`%USERPROFILE%\.rogue-env` on Windows), and
-confirms your actor identity. On macOS/Linux it also configures a `Rogue Security`
-status badge below the prompt (🟢 connected / 🔴 not set up).
+The one installer detects every supported coding agent and installs the matching
+Rogue plugin into each — **Claude Code**, **OpenAI Codex**, and **Cursor** — writing
+the shared `~/.rogue-env` (`%USERPROFILE%\.rogue-env` on Windows) once. Claude and
+Codex install through their native plugin CLIs (`claude plugin install` /
+`codex plugin add`); **Cursor has no plugin CLI**, so its plugin is copied into
+`~/.cursor/plugins/local/rogue` from the release tarball. The installer validates and
+writes your API key, confirms your actor identity, and on macOS/Linux configures a
+`Rogue Security` status badge below the Claude prompt (🟢 connected / 🔴 not set up).
+
+For org-wide Cursor rollout, import this repo as a Cursor **Team Marketplace**
+(Dashboard → marketplaces) — that is Cursor's native managed/auto-update path, separate
+from the per-developer one-liner above.
 
 Native Windows support requires no WSL or Git Bash: every hook ships both a POSIX
 `sh` script and a PowerShell sibling, and exactly one runs per machine.

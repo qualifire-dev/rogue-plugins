@@ -70,11 +70,13 @@ try {
 Write-Host ""
 Write-Host "Rogue Security (Windows)" -ForegroundColor Cyan
 
-# Detect every supported agent on PATH; at least one is required.
+# Detect every supported agent; at least one is required. claude/codex ship a CLI
+# on PATH; Cursor's `cursor` command is opt-in, so also accept %USERPROFILE%\.cursor.
 $hasClaude = [bool](Get-Command claude -ErrorAction SilentlyContinue)
 $hasCodex  = [bool](Get-Command codex  -ErrorAction SilentlyContinue)
-if (-not ($hasClaude -or $hasCodex)) {
-    Die "No supported coding agent found on PATH (looked for: claude, codex). Install Claude Code (https://claude.com/code) or OpenAI Codex first."
+$hasCursor = [bool](Get-Command cursor -ErrorAction SilentlyContinue) -or (Test-Path (Join-Path $env:USERPROFILE '.cursor'))
+if (-not ($hasClaude -or $hasCodex -or $hasCursor)) {
+    Die "No supported coding agent found (looked for: claude, codex, cursor). Install Claude Code (https://claude.com/code), OpenAI Codex, or Cursor (https://cursor.com) first."
 }
 # Claude shells out to git to clone the marketplace; git is required only for it.
 if ($hasClaude -and -not (Get-Command git -ErrorAction SilentlyContinue)) {
@@ -214,6 +216,45 @@ if ($hasCodex) {
     if (-not $installed) { Die "codex plugin add failed. Run 'codex plugin add $PluginName@$MarketplaceName' to see the error." }
     Ok 'Plugin installed'
     Warn2 'Codex skips untrusted hooks - open /hooks in Codex and trust the Rogue entries once.'
+}
+
+# Cursor has no plugin CLI: install is a file copy into
+# %USERPROFILE%\.cursor\plugins\local\rogue. Download the release tarball, extract
+# with `tar` (bundled in Windows 10+), and copy plugins\cursor into place. The Team
+# Marketplace is the separate, admin-driven managed path; this does not touch it.
+if ($hasCursor) {
+    Write-Host ""
+    Write-Host "Rogue Security - Cursor" -ForegroundColor Cyan
+    if (-not (Get-Command python -ErrorAction SilentlyContinue) -and -not (Get-Command python3 -ErrorAction SilentlyContinue)) {
+        Warn2 "python not found - the Cursor plugin's hooks need it at runtime. Install Python to activate Rogue in Cursor."
+    }
+    $asset = 'rogue-plugin-cursor.tar.gz'
+    if ($env:ROGUE_PLUGIN_VERSION) {
+        $url = "https://github.com/$PluginRepo/releases/download/$($env:ROGUE_PLUGIN_VERSION)/$asset"
+    } else {
+        $url = "https://github.com/$PluginRepo/releases/latest/download/$asset"
+    }
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("rogue-cursor-" + [System.IO.Path]::GetRandomFileName())
+    New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+    try {
+        Log "Downloading plugin $asset"
+        $tarball = Join-Path $tmp 'p.tar.gz'
+        Invoke-WebRequest -Uri $url -OutFile $tarball -UseBasicParsing -TimeoutSec 60 -ErrorAction Stop
+        & tar -xzf $tarball -C $tmp
+        if ($LASTEXITCODE -ne 0) { Die "Could not extract the Cursor plugin tarball (is 'tar' available?)." }
+        $src = Get-ChildItem -Path $tmp -Recurse -Directory -Filter 'cursor' |
+            Where-Object { Test-Path (Join-Path $_.FullName '.cursor-plugin\plugin.json') } |
+            Select-Object -First 1
+        if (-not $src) { Die "Cursor plugin manifest missing in download." }
+        $dest = Join-Path $env:USERPROFILE '.cursor\plugins\local\rogue'
+        if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
+        New-Item -ItemType Directory -Path $dest -Force | Out-Null
+        Copy-Item -Recurse -Force (Join-Path $src.FullName '*') $dest
+        Ok "Plugin installed -> $dest"
+        Warn2 'Fully quit and reopen Cursor, then run /rogue:status to verify.'
+    } finally {
+        Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+    }
 }
 
 Write-Host @"

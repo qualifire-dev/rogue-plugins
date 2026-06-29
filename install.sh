@@ -96,12 +96,17 @@ have_cmd() { command -v "$1" >/dev/null 2>&1; }
 # main() detects each agent via `have_cmd <bin>` and runs its installer. Add an
 # agent = one detect line in main() + one `<id>_install_plugin` function.
 #
-#   id        label          detect             installer
-#   ────────  ─────────────  ─────────────────  ──────────────
-#   claude    Claude Code    command:claude     install_claude   ← implemented
-#   codex     Codex CLI      command:codex      install_codex    ← implemented
-#   gemini    Gemini CLI     command:gemini     install_gemini   (not yet)
-#   cursor    Cursor         command:cursor     install_cursor   (not yet)
+#   id        label          detect                installer
+#   ────────  ─────────────  ────────────────────  ──────────────
+#   claude    Claude Code    command:claude        install_claude   ← implemented
+#   codex     Codex CLI      command:codex         install_codex    ← implemented
+#   cursor    Cursor         command:cursor|~/.cursor  install_cursor ← implemented
+#   gemini    Gemini CLI     command:gemini        install_gemini   (not yet)
+#
+# Claude and Codex install via their native plugin CLIs (which git-clone the
+# marketplace). Cursor has NO plugin CLI — install is a file copy into
+# ~/.cursor/plugins/local/rogue. So install_cursor downloads the release tarball
+# and copies the plugin tree (see cursor_install_plugin).
 
 # ── Marketplace + plugin install (Claude) ─────────────────────────────────────
 claude_install_plugin() {
@@ -157,6 +162,46 @@ codex_install_plugin() {
   else
     die "codex plugin add failed. Run 'codex plugin add ${PLUGIN_NAME}@${MARKETPLACE_NAME}' to see the error."
   fi
+}
+
+# ── File-copy install (Cursor) ────────────────────────────────────────────────
+# Cursor has no plugin CLI and no marketplace-add command — the only programmatic
+# install is dropping the plugin tree into ~/.cursor/plugins/local/<name>. So we
+# download the release tarball, extract it, and copy plugins/cursor/ into place
+# (mirrors rogue-plugin-cursor/install.sh). Re-running overwrites — safe upgrade.
+# The Team Marketplace (.cursor-plugin/marketplace.json) is the separate, admin-
+# driven managed/auto-update path; this one-liner does not touch it.
+CURSOR_INSTALL_DIR="$HOME/.cursor/plugins/local/${PLUGIN_NAME}"
+cursor_install_plugin() {
+  local tmp asset url src
+  asset="rogue-plugin-cursor.tar.gz"
+  if [ -n "${ROGUE_PLUGIN_VERSION:-}" ]; then
+    url="https://github.com/${ROGUE_PLUGIN_REPO}/releases/download/${ROGUE_PLUGIN_VERSION}/${asset}"
+  else
+    url="https://github.com/${ROGUE_PLUGIN_REPO}/releases/latest/download/${asset}"
+  fi
+
+  tmp="$(mktemp -d)" || die "Could not create a temp dir for the Cursor download."
+  # shellcheck disable=SC2064
+  trap "rm -rf '$tmp'" RETURN
+
+  note "Downloading plugin ${C_DIM}${asset}${C_RESET}"
+  curl -fsSL --max-time 60 -o "$tmp/p.tar.gz" "$url" \
+    || die "Download failed from $url"
+  mkdir -p "$tmp/extract"
+  tar -xzf "$tmp/p.tar.gz" -C "$tmp/extract" \
+    || die "Could not extract the Cursor plugin tarball."
+
+  # The tarball stages a top dir (rogue-plugin-cursor/) containing plugins/cursor/.
+  src="$(find "$tmp/extract" -type d -path '*/plugins/cursor' | head -1)"
+  [ -n "$src" ] && [ -f "$src/.cursor-plugin/plugin.json" ] \
+    || die "Cursor plugin manifest missing in download."
+
+  mkdir -p "$(dirname "$CURSOR_INSTALL_DIR")"
+  rm -rf "$CURSOR_INSTALL_DIR"
+  mkdir -p "$CURSOR_INSTALL_DIR"
+  cp -R "$src/." "$CURSOR_INSTALL_DIR/"
+  ok "Plugin installed → ${C_DIM}$CURSOR_INSTALL_DIR${C_RESET}"
 }
 
 # ── Credentials ───────────────────────────────────────────────────────────────
@@ -396,6 +441,15 @@ install_codex() {
   note "Codex skips untrusted hooks — open ${C_DIM}/hooks${C_RESET} in Codex and trust the Rogue entries once."
 }
 
+install_cursor() {
+  printf '\n%sRogue Security%s — Cursor\n' "$C_TEAL" "$C_RESET" >&2
+  # The Cursor hooks dispatch through python3; warn (don't die) if it's absent so
+  # other detected agents still install. tar/curl (used above) are assumed present.
+  have_cmd python3 || warn "python3 not found — the Cursor plugin's hooks need it at runtime. Install python3 to activate Rogue in Cursor."
+  cursor_install_plugin
+  note "Fully quit and reopen Cursor, then run ${C_DIM}/rogue:status${C_RESET} to verify."
+}
+
 # ── CLI flags ─────────────────────────────────────────────────────────────────
 # Accepts `--flag=value` and `--flag value`. Sets the same globals the env knobs
 # do, so the rest of the script is flag-agnostic. CLI flags override env vars.
@@ -426,11 +480,13 @@ parse_args() {
 main() {
   parse_args "$@"
 
-  # Detect every supported agent on PATH.
+  # Detect every supported agent. claude/codex ship a CLI on PATH; Cursor's
+  # `cursor` shell command is opt-in, so also accept the presence of ~/.cursor.
   agents=""
   have_cmd claude && agents="$agents claude"
   have_cmd codex  && agents="$agents codex"
-  [ -n "$agents" ] || die "No supported coding agent found on PATH (looked for: claude, codex). Install Claude Code (https://claude.com/code) or OpenAI Codex first."
+  { have_cmd cursor || [ -d "$HOME/.cursor" ]; } && agents="$agents cursor"
+  [ -n "$agents" ] || die "No supported coding agent found (looked for: claude, codex, cursor). Install Claude Code (https://claude.com/code), OpenAI Codex, or Cursor (https://cursor.com) first."
 
   # Credentials once — every plugin reads the shared ~/.rogue-env.
   configure_credentials
@@ -439,6 +495,7 @@ main() {
     case "$a" in
       claude) install_claude ;;
       codex)  install_codex ;;
+      cursor) install_cursor ;;
     esac
   done
 
