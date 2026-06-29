@@ -249,9 +249,8 @@ if ($hasCodex) {
 if ($hasCursor) {
     Write-Host ""
     Write-Host "Rogue Security - Cursor" -ForegroundColor Cyan
-    if (-not (Get-Command python -ErrorAction SilentlyContinue) -and -not (Get-Command python3 -ErrorAction SilentlyContinue)) {
-        Warn2 "python not found - the Cursor plugin's hooks need it at runtime. Install Python to activate Rogue in Cursor."
-    }
+    # Cursor ships dual dispatchers (sh + PowerShell) like Claude/Codex; the runtime
+    # is the same shell stack, so no extra prerequisite check beyond tar (below).
     $asset = 'rogue-plugin-cursor.tar.gz'
     if ($env:ROGUE_PLUGIN_VERSION) {
         $url = "https://github.com/$PluginRepo/releases/download/$($env:ROGUE_PLUGIN_VERSION)/$asset"

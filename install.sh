@@ -449,9 +449,9 @@ install_codex() {
 
 install_cursor() {
   printf '\n%sRogue Security%s — Cursor\n' "$C_TEAL" "$C_RESET" >&2
-  # The Cursor hooks dispatch through python3; warn (don't die) if it's absent so
-  # other detected agents still install. tar/curl (used above) are assumed present.
-  have_cmd python3 || warn "python3 not found — the Cursor plugin's hooks need it at runtime. Install python3 to activate Rogue in Cursor."
+  # The Cursor plugin ships dual dispatchers (sh + PowerShell) like Claude/Codex —
+  # the matching runtime is the same shell running this installer, so no extra
+  # prerequisite check. tar/curl (used in cursor_install_plugin) are assumed present.
   cursor_install_plugin
   note "Fully quit and reopen Cursor, then run ${C_DIM}/rogue:status${C_RESET} to verify."
 }
