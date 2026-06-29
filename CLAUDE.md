@@ -10,7 +10,7 @@ There is no build step for the plugin itself: it's a directory of JSON + shell s
 
 **Cross-platform by dual dispatcher.** Every event ships TWO implementations — a POSIX-`sh` script (`hook.sh` & friends) for macOS/Linux/WSL and a PowerShell sibling (`hook.ps1` & friends) for **native Windows (no WSL, no Git Bash)**. `hooks.json` registers an `sh` entry and a PowerShell entry for each event; exactly one does real work per machine (see "The hook pattern"). When you change one dispatcher's behavior, change the other to match — keep `hook.sh` / `hook.ps1` in lockstep.
 
-**This repo is now a multi-agent monorepo.** Besides the Claude plugin (`plugins/rogue/`, endpoint `/hooks/claude`) it also ships the **OpenAI Codex** plugin (`plugins/codex/`, endpoint `/hooks/openai`, family `openai`, surface `codex_cli`/`codex_app`) and a **caveman-style multi-agent installer** (`install-all.sh` / `install-all.ps1`) that detects every installed coding agent and installs the matching Rogue plugin into each.
+**This repo is now a multi-agent monorepo.** Besides the Claude plugin (`plugins/rogue/`, endpoint `/hooks/claude`) it also ships the **OpenAI Codex** plugin (`plugins/codex/`, endpoint `/hooks/openai`, family `openai`, surface `codex_cli`/`codex_app`). The one-line installer (`install.sh` / `install.ps1`) detects **every** supported agent on PATH (`claude`, `codex`) and installs the matching Rogue plugin into each, writing the shared `~/.rogue-env` once.
 
 ### Codex plugin (`plugins/codex/`)
 Mirrors the Claude plugin with deliberate differences:
@@ -21,8 +21,8 @@ Mirrors the Claude plugin with deliberate differences:
 - No `CLAUDE_CODE_ENTRYPOINT` gate (Codex doesn't set it; the hook only ever fires from Codex's own `hooks.json`).
 - **Hook trust**: Codex hashes the whole hook definition and skips untrusted command hooks until reviewed via `/hooks`. Keep `hooks.json` command strings (POSIX `command` + Windows `commandWindows`) **byte-identical forever**; mutate only `scripts/*` so trust survives updates. Setup/status commands document the one-time `/hooks` trust step.
 
-### Multi-agent installer (`install-all.sh` / `install-all.ps1`)
-A thin bash/PowerShell dispatcher (no node/python). A `PROVIDERS` table detects agents (`command -v` / `Get-Command` + dir probes). All Rogue plugins **share `~/.rogue-env`**, so it prompts + validates the key via `/hooks/ping` ONCE, writes the shared env, then runs each per-agent install non-interactively (`claude/codex plugin install`, or curls the Cursor installer). Flags mirror caveman: `--only/--skip/--list/--dry-run/--force/--non-interactive/--api-key`. Fail-soft per agent.
+### Multi-agent install (`install.sh` / `install.ps1`)
+The single one-line installer detects every supported agent on PATH (`have_cmd claude` / `have_cmd codex`; PowerShell uses `Get-Command`), writes the shared `~/.rogue-env` **once** (`configure_credentials`), then runs each agent's marketplace+plugin install (`claude plugin install` / `codex plugin install rogue@rogue-marketplace` against the same monorepo). Adding an agent = one detect line + one `*_install_plugin` function. Codex prints the one-time `/hooks` trust reminder.
 
 ## Repo layout (load-bearing pieces)
 

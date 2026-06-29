@@ -68,13 +68,16 @@ try {
 } catch {}
 
 Write-Host ""
-Write-Host "Rogue Security - Claude Code (Windows)" -ForegroundColor Cyan
+Write-Host "Rogue Security (Windows)" -ForegroundColor Cyan
 
-# Claude CLI + git are required (Claude shells out to git to clone the marketplace).
-if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
-    Die "Claude Code CLI not found on PATH. Install it from https://claude.com/code first."
+# Detect every supported agent on PATH; at least one is required.
+$hasClaude = [bool](Get-Command claude -ErrorAction SilentlyContinue)
+$hasCodex  = [bool](Get-Command codex  -ErrorAction SilentlyContinue)
+if (-not ($hasClaude -or $hasCodex)) {
+    Die "No supported coding agent found on PATH (looked for: claude, codex). Install Claude Code (https://claude.com/code) or OpenAI Codex first."
 }
-if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+# Claude shells out to git to clone the marketplace; git is required only for it.
+if ($hasClaude -and -not (Get-Command git -ErrorAction SilentlyContinue)) {
     Die "git not found. Install Git for Windows (https://git-scm.com/download/win) first."
 }
 
@@ -165,43 +168,63 @@ if ($ApiKey) {
     Ok "Credentials written to $EnvFile"
 }
 
-# Install through the Claude CLI marketplace (cross-platform; same as install.sh).
-# `claude` is a native command - a non-zero exit does NOT throw, so gate on
-# $LASTEXITCODE (the catch only fires if the process can't be spawned at all),
-# mirroring the plugin-install block below.
-Log "Adding marketplace $PluginRepo"
-$mktOk = $false
-try { & claude plugin marketplace add $PluginRepo 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) { $mktOk = $true } } catch {}
-if ($mktOk) {
-    Ok 'Marketplace added'
-} else {
-    # Already present (or transient) - refresh from source instead.
-    try { & claude plugin marketplace update $MarketplaceName 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) { $mktOk = $true } } catch {}
-    if ($mktOk) { Ok 'Marketplace updated' }
-    else { Warn2 'Could not add or update marketplace (continuing - it may already be present).' }
+# Install through each agent's CLI marketplace (cross-platform; same monorepo for
+# both — Claude reads .claude-plugin/marketplace.json, Codex reads
+# .agents/plugins/marketplace.json; marketplace `rogue-marketplace` + plugin
+# `rogue` are identical). `claude`/`codex` are native commands — a non-zero exit
+# does NOT throw, so gate on $LASTEXITCODE.
+if ($hasClaude) {
+    Write-Host ""
+    Write-Host "Rogue Security - Claude Code" -ForegroundColor Cyan
+    Log "Adding marketplace $PluginRepo"
+    $mktOk = $false
+    try { & claude plugin marketplace add $PluginRepo 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) { $mktOk = $true } } catch {}
+    if ($mktOk) { Ok 'Marketplace added' }
+    else {
+        try { & claude plugin marketplace update $MarketplaceName 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) { $mktOk = $true } } catch {}
+        if ($mktOk) { Ok 'Marketplace updated' }
+        else { Warn2 'Could not add or update marketplace (continuing - it may already be present).' }
+    }
+    Log "Installing plugin $PluginName@$MarketplaceName"
+    $installed = $false
+    try { & claude plugin install "$PluginName@$MarketplaceName" 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) { $installed = $true } } catch {}
+    if (-not $installed) {
+        try { & claude plugin update $PluginName 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) { $installed = $true } } catch {}
+    }
+    if (-not $installed) { Die "claude plugin install failed. Run 'claude plugin install $PluginName@$MarketplaceName' to see the error." }
+    Ok 'Plugin installed'
 }
 
-Log "Installing plugin $PluginName@$MarketplaceName"
-$installed = $false
-try { & claude plugin install "$PluginName@$MarketplaceName" 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) { $installed = $true } } catch {}
-if (-not $installed) {
-    try { & claude plugin update $PluginName 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) { $installed = $true } } catch {}
+if ($hasCodex) {
+    Write-Host ""
+    Write-Host "Rogue Security - OpenAI Codex" -ForegroundColor Cyan
+    Log "Adding marketplace $PluginRepo"
+    $mktOk = $false
+    try { & codex plugin marketplace add $PluginRepo 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) { $mktOk = $true } } catch {}
+    if ($mktOk) { Ok 'Marketplace added' }
+    else {
+        try { & codex plugin marketplace upgrade $MarketplaceName 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) { $mktOk = $true } } catch {}
+        if ($mktOk) { Ok 'Marketplace updated' }
+        else { Warn2 'Could not add or update Codex marketplace (continuing - it may already be present).' }
+    }
+    Log "Installing plugin $PluginName@$MarketplaceName"
+    $installed = $false
+    try { & codex plugin install "$PluginName@$MarketplaceName" 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) { $installed = $true } } catch {}
+    if (-not $installed) { Die "codex plugin install failed. Run 'codex plugin install $PluginName@$MarketplaceName' to see the error." }
+    Ok 'Plugin installed'
+    Warn2 'Codex skips untrusted hooks - open /hooks in Codex and trust the Rogue entries once.'
 }
-if (-not $installed) {
-    Die "claude plugin install failed. Run 'claude plugin install $PluginName@$MarketplaceName' to see the error."
-}
-Ok 'Plugin installed'
 
 Write-Host @"
 
-v Rogue Security (Claude Code) installed.
+v Rogue Security installed.
 
   Credentials:  $EnvFile
 
 Next steps:
-  1. Fully quit Claude Code and reopen it (hooks load credentials at session start).
-  2. Run /rogue:status inside Claude Code to verify.
+  1. Fully quit and reopen each agent (hooks load credentials at session start).
+  2. Run /rogue:status inside the agent to verify.
   3. AIDR dashboard: https://app.rogue.security/aidr
 
-Re-running this installer upgrades the plugin and is safe.
+Re-running this installer upgrades the plugins and is safe.
 "@ -ForegroundColor Green

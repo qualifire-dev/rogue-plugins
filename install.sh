@@ -93,19 +93,15 @@ ask() { # ask <varname> <prompt> [-s]
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
 
 # ── Agent detection (extensible probe) ────────────────────────────────────────
-# Mirrors caveman's provider matrix. Each agent: a `command:<bin>` probe and an
-# installer function. Only `claude` is wired today; the rest are placeholders so
-# a future maintainer adds a row + a function and nothing else moves.
+# main() detects each agent via `have_cmd <bin>` and runs its installer. Add an
+# agent = one detect line in main() + one `<id>_install_plugin` function.
 #
 #   id        label          detect             installer
 #   ────────  ─────────────  ─────────────────  ──────────────
 #   claude    Claude Code    command:claude     install_claude   ← implemented
+#   codex     Codex CLI      command:codex      install_codex    ← implemented
 #   gemini    Gemini CLI     command:gemini     install_gemini   (not yet)
 #   cursor    Cursor         command:cursor     install_cursor   (not yet)
-#   codex     Codex CLI      command:codex      install_codex    (not yet)
-#
-# When generalizing, drop the `-claude` suffix from the repo name and add the
-# rows above; all Claude-specific paths key off $CONFIG_DIR already.
 
 # ── Marketplace + plugin install (Claude) ─────────────────────────────────────
 claude_install_plugin() {
@@ -133,6 +129,32 @@ claude_install_plugin() {
     ok "Plugin updated"
   else
     die "claude plugin install failed. Run 'claude plugin install ${PLUGIN_NAME}@${MARKETPLACE_NAME}' to see the error."
+  fi
+}
+
+# ── Marketplace + plugin install (Codex) ──────────────────────────────────────
+# Same monorepo: Codex reads .agents/plugins/marketplace.json, Claude reads
+# .claude-plugin/marketplace.json — both name the marketplace `rogue-marketplace`
+# and the plugin `rogue`, so the slug and `${PLUGIN_NAME}@${MARKETPLACE_NAME}` match.
+codex_install_plugin() {
+  note "Adding marketplace ${C_DIM}$ROGUE_PLUGIN_REPO${C_RESET}"
+  local add_err
+  if add_err="$(codex plugin marketplace add "$ROGUE_PLUGIN_REPO" 2>&1)"; then
+    ok "Marketplace added"
+  else
+    if codex plugin marketplace upgrade "$MARKETPLACE_NAME" >/dev/null 2>&1; then
+      ok "Marketplace updated"
+    else
+      warn "Could not add or update Codex marketplace (continuing — it may already be present)"
+      [ -n "$add_err" ] && note "${C_DIM}${add_err}${C_RESET}"
+    fi
+  fi
+
+  note "Installing plugin ${C_DIM}${PLUGIN_NAME}@${MARKETPLACE_NAME}${C_RESET}"
+  if codex plugin install "${PLUGIN_NAME}@${MARKETPLACE_NAME}" >/dev/null 2>&1; then
+    ok "Plugin installed"
+  else
+    die "codex plugin install failed. Run 'codex plugin install ${PLUGIN_NAME}@${MARKETPLACE_NAME}' to see the error."
   fi
 }
 
@@ -349,10 +371,11 @@ configure_statusline() {
   esac
 }
 
-# ── Claude installer (the one implemented agent) ──────────────────────────────
+# ── Per-agent installers ──────────────────────────────────────────────────────
+# Credentials are written once (shared ~/.rogue-env) by main(); these only do the
+# agent-specific marketplace/plugin install.
 install_claude() {
   printf '\n%sRogue Security%s — Claude Code\n' "$C_TEAL" "$C_RESET" >&2
-  have_cmd claude || die "Claude Code CLI not found on PATH. Install it from https://claude.com/code first."
   # Claude Code shells out to system git to clone the marketplace. A fresh
   # machine without git makes the clone fail — name it here instead of letting
   # it surface later as a misleading "plugin not found". Hint per-OS.
@@ -363,12 +386,13 @@ install_claude() {
     esac
   fi
   claude_install_plugin
-  configure_credentials
   configure_statusline
+}
 
-  printf '\n' >&2
-  ok "Done. ${C_TEAL}Rogue Security${C_RESET} 🟢"
-  note "Open a new Claude Code session, then run ${C_DIM}/rogue:status${C_RESET} to verify."
+install_codex() {
+  printf '\n%sRogue Security%s — OpenAI Codex\n' "$C_TEAL" "$C_RESET" >&2
+  codex_install_plugin
+  note "Codex skips untrusted hooks — open ${C_DIM}/hooks${C_RESET} in Codex and trust the Rogue entries once."
 }
 
 # ── CLI flags ─────────────────────────────────────────────────────────────────
@@ -400,16 +424,26 @@ parse_args() {
 # ── Dispatch: detect installed agents, install for each ───────────────────────
 main() {
   parse_args "$@"
-  local found=0
-  # Only `claude` is wired today. Future: loop the AGENTS matrix above.
-  if have_cmd claude; then
-    found=1
-    install_claude
-  fi
 
-  if [ "$found" = "0" ]; then
-    die "No supported coding agent found on PATH (looked for: claude). Install Claude Code first: https://claude.com/code"
-  fi
+  # Detect every supported agent on PATH.
+  agents=""
+  have_cmd claude && agents="$agents claude"
+  have_cmd codex  && agents="$agents codex"
+  [ -n "$agents" ] || die "No supported coding agent found on PATH (looked for: claude, codex). Install Claude Code (https://claude.com/code) or OpenAI Codex first."
+
+  # Credentials once — every plugin reads the shared ~/.rogue-env.
+  configure_credentials
+
+  for a in $agents; do
+    case "$a" in
+      claude) install_claude ;;
+      codex)  install_codex ;;
+    esac
+  done
+
+  printf '\n' >&2
+  ok "Done. ${C_TEAL}Rogue Security${C_RESET} 🟢 (${agents# })"
+  note "Open a new session in each agent, then run ${C_DIM}/rogue:status${C_RESET} to verify."
 }
 
 main "$@"
