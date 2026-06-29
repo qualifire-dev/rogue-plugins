@@ -58,11 +58,15 @@ jobs:
             echo "ok: $src @ $pv"
           done
 
-      - name: Shell dispatchers parse (POSIX sh)
+      - name: Shell scripts parse
         run: |
           set -euo pipefail
+          # Parse each script with the interpreter its shebang names: the runtime
+          # hook dispatchers are POSIX sh (validate under dash), while install.sh /
+          # build-release.sh are bash (arrays, RETURN traps). Wrong parser = false fail.
           fail=0
           while IFS= read -r f; do
-            if ! sh -n "$f"; then echo "::error file=$f::sh parse error"; fail=1; fi
+            if head -1 "$f" | grep -q bash; then chk="bash -n"; else chk="dash -n"; fi
+            if ! $chk "$f"; then echo "::error file=$f::$chk parse error"; fail=1; fi
           done < <(git ls-files 'plugins/**/scripts/*.sh' 'install.sh' 'scripts/*.sh')
           [ "$fail" = 0 ] || exit 1
