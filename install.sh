@@ -178,6 +178,11 @@ codex_install_plugin() {
 # The Team Marketplace (.cursor-plugin/marketplace.json) is the separate, admin-
 # driven managed/auto-update path; this one-liner does not touch it.
 CURSOR_INSTALL_DIR="$HOME/.cursor/plugins/local/${PLUGIN_NAME}"
+# Returns non-zero (never `die`s) so a missing release asset or transient download
+# failure can't abort the whole installer — Cursor is auto-detected from ~/.cursor,
+# which is present for almost every developer, so a hard failure here would break
+# the Claude/Codex installs that ran first. install_cursor() warns on a non-zero
+# return and the run continues.
 cursor_install_plugin() {
   local tmp asset url src
   asset="rogue-plugin-cursor.tar.gz"
@@ -187,21 +192,23 @@ cursor_install_plugin() {
     url="https://github.com/${ROGUE_PLUGIN_REPO}/releases/latest/download/${asset}"
   fi
 
-  tmp="$(mktemp -d)" || die "Could not create a temp dir for the Cursor download."
+  tmp="$(mktemp -d)" || { warn "Could not create a temp dir for the Cursor download."; return 1; }
   # shellcheck disable=SC2064
   trap "rm -rf '$tmp'" RETURN
 
   note "Downloading plugin ${C_DIM}${asset}${C_RESET}"
-  curl -fsSL --max-time 60 -o "$tmp/p.tar.gz" "$url" \
-    || die "Download failed from $url"
+  if ! curl -fsSL --max-time 60 -o "$tmp/p.tar.gz" "$url"; then
+    warn "Cursor plugin asset not available yet ($url) — skipping Cursor. Re-run the installer once it's published."
+    return 1
+  fi
   mkdir -p "$tmp/extract"
   tar -xzf "$tmp/p.tar.gz" -C "$tmp/extract" \
-    || die "Could not extract the Cursor plugin tarball."
+    || { warn "Could not extract the Cursor plugin tarball — skipping Cursor."; return 1; }
 
   # The tarball stages a top dir (rogue-plugin-cursor/) containing plugins/cursor/.
   src="$(find "$tmp/extract" -type d -path '*/plugins/cursor' | head -1)"
   [ -n "$src" ] && [ -f "$src/.cursor-plugin/plugin.json" ] \
-    || die "Cursor plugin manifest missing in download."
+    || { warn "Cursor plugin manifest missing in download — skipping Cursor."; return 1; }
 
   mkdir -p "$(dirname "$CURSOR_INSTALL_DIR")"
   rm -rf "$CURSOR_INSTALL_DIR"
@@ -452,8 +459,10 @@ install_cursor() {
   # The Cursor plugin ships dual dispatchers (sh + PowerShell) like Claude/Codex —
   # the matching runtime is the same shell running this installer, so no extra
   # prerequisite check. tar/curl (used in cursor_install_plugin) are assumed present.
-  cursor_install_plugin
-  note "Fully quit and reopen Cursor, then run ${C_DIM}/rogue:status${C_RESET} to verify."
+  # Non-fatal: a failed Cursor install must not abort the run (see cursor_install_plugin).
+  if cursor_install_plugin; then
+    note "Fully quit and reopen Cursor, then run ${C_DIM}/rogue:status${C_RESET} to verify."
+  fi
 }
 
 # ── CLI flags ─────────────────────────────────────────────────────────────────
