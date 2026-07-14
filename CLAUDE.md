@@ -16,7 +16,7 @@ There is no build step for the plugin itself: it's a directory of JSON + shell s
 Mirrors the Claude plugin with deliberate differences:
 - **Manifest is `.codex-plugin/plugin.json`**; the Codex marketplace file is `.agents/plugins/marketplace.json` (kept separate from the Claude `.claude-plugin/marketplace.json` so the shared plugin name `rogue` doesn't collide and Codex never falls back to the Claude marketplace).
 - **Codex-native env vars ONLY.** Use `PLUGIN_ROOT` / `PLUGIN_DATA` — never any `CLAUDE_*` variable. Codex exposes `CLAUDE_PLUGIN_ROOT`/`CLAUDE_CODE_USER_EMAIL` as compat shims, but the Codex plugin must not reference them (`hooks.json` uses `${PLUGIN_ROOT}` / `%PLUGIN_ROOT%`; `actor.sh` cascade is env → `git config` → hostname/whoami).
-- **`hook.sh`/`hook.ps1` are PURE RELAY** — no block-detection regex, no `security-alert` script. Codex displays the native deny shape itself; the Claude modal exists only because the Claude app hides the block reason. Don't add an alert to Codex.
+- **`hook.sh`/`hook.ps1` are PURE RELAY** — no block-detection regex, no local alert. Codex displays the native deny shape itself. (The Claude plugin once shipped a `security-alert` modal because the Claude app hid the block reason; Claude Desktop now shows blocks natively, so that hack was removed everywhere.)
 - **No `auto-update.sh`.** Codex has no documented native plugin auto-update, but the updater is speculative + fragile, so v1 omits it; heartbeat's `update_available` drives the dashboard "outdated" badge instead. Re-add (copy Claude's) only if a confirmed gap needs silent push.
 - No `CLAUDE_CODE_ENTRYPOINT` gate (Codex doesn't set it; the hook only ever fires from Codex's own `hooks.json`).
 - **Hook trust**: Codex hashes the whole hook definition and skips untrusted command hooks until reviewed via `/hooks`. Keep `hooks.json` command strings (POSIX `command` + Windows `commandWindows`) **byte-identical forever**; mutate only `scripts/*` so trust survives updates. Setup/status commands document the one-time `/hooks` trust step.
@@ -41,7 +41,6 @@ The single one-line installer detects every supported agent (`have_cmd claude` /
 - `plugins/rogue/scripts/setup.sh` / `setup.ps1` — write `~/.rogue-env` (mode 600) / `%USERPROFILE%\.rogue-env` (ACL-restricted) with `ROGUE_API_KEY` / `ROGUE_ACTOR_EMAIL` / `ROGUE_ACTOR_NAME`. Both emit the same `export KEY=value` POSIX-quoted format. Called by `/rogue:setup`.
 - `plugins/rogue/scripts/auto-update.sh` / `auto-update.ps1` — fire (detached) from `SessionStart`. Rate-limited once/24h. Re-invoke the matching one-line installer (`install.sh` / `install.ps1`) when a newer release tag exists.
 - `plugins/rogue/scripts/heartbeat.sh` / `heartbeat.ps1` — SessionStart presence beacon (detached). POST `/api/v1/hooks/status`.
-- `plugins/rogue/scripts/security-alert.sh` / `security-alert.ps1` — modal block alert: osascript (macOS) / notify-send (Linux) / `System.Windows.Forms.MessageBox` (Windows). Launched in the background by `hook.sh` / `hook.ps1` on a block.
 - `plugins/rogue/scripts/warn.sh` — SessionStart "not configured" nudge (sh path only; the ps1 path emits the hint inline from `hook.ps1`).
 - `plugins/rogue/skills/{setup,status}/SKILL.md` — slash commands (`/rogue:setup`, `/rogue:status`) in the skills format. **Instructions to Claude**, not scripts — Claude runs the bash/PowerShell inside them step-by-step (each carries macOS/Linux and Windows variants). `setup` sets `disable-model-invocation: true` (it writes credentials, so user-invoke only); `status` is read-only and model-invocable. Auto-discovered from `skills/` — no manifest entry needed.
 - `install.sh` / `install.ps1` — one-line installers. Both add the marketplace via the Claude CLI (`claude plugin marketplace add` + `claude plugin install`) — they do NOT download the release tarball.
@@ -53,28 +52,35 @@ Every event registers two entries — an `sh` one and a PowerShell one — point
 
 ```json
 { "type": "command",
-  "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" PreToolUse || echo '{}'",
-  "timeout": 12 },
+  "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" PreToolUse ; exit 0",
+  "timeout": 20 },
 { "type": "command",
-  "command": "powershell -NoProfile -NonInteractive -Command \"& ([scriptblock]::Create((Get-Content -Raw -LiteralPath (Join-Path $env:CLAUDE_PLUGIN_ROOT 'scripts/hook.ps1')))) PreToolUse\"",
-  "timeout": 15 }
+  "command": "powershell -NoProfile -NonInteractive -Command \"& ([scriptblock]::Create((Get-Content -Raw -LiteralPath (Join-Path (Get-Item Env:CLAUDE_PLUGIN_ROOT).Value 'scripts/hook.ps1')))) PreToolUse\" ; exit 0",
+  "timeout": 20 }
 ```
 
-`scripts/hook.sh <EventName>` is the orchestrator: stands down under Git Bash, sources env files, fail-opens on missing API key, sources `scripts/actor.sh` for actor resolution, POSTs stdin to `/api/v1/hooks/claude` with the four `x-rogue-*` headers, parses the response for a block decision, fires `scripts/security-alert.sh` in the background on block (skipped when `CLAUDE_CODE_ENTRYPOINT=cli`), and prints the API response to stdout. `hook.ps1` does the same on Windows. Logs every invocation to `$ROGUE_LOG_FILE` (default `~/.rogue/hook.log` / `%USERPROFILE%\.rogue\hook.log`); the logged `reason` is sanitized of control characters to prevent log forgery from server-controlled text.
+**Every command string is an sh + PowerShell 5.1 polyglot that always exits 0.** Claude Code runs shell-form hook commands via `sh -c` on macOS/Linux, **Git Bash** on Windows when Git is installed, and **PowerShell** (pwsh, else powershell.exe 5.1) on Windows without Git Bash — and it shows a visible "hook error" notice for **any non-zero exit** (stderr is hidden only on exit 0). So each command must parse and exit 0 under all three shells; `tests/test_hooks_json.sh` lints exactly this. The polyglot rules:
+
+- End every command with `; exit 0` — the only construct that swallows a missing-binary failure in both sh (`exit 127` → `exit 0`) and PS 5.1 (command-not-found is non-terminating; execution continues to `exit 0`). Never use `||` or `&&` — both are PS 5.1 *parse* errors, which fail the whole command including the `exit 0`.
+- No `$` anywhere in the PowerShell entries. Under Git Bash the whole command is parsed by *bash*, which expands `$env` inside double quotes and mangles the path. Read the plugin root as `(Get-Item Env:CLAUDE_PLUGIN_ROOT).Value` instead of `$env:CLAUDE_PLUGIN_ROOT`.
+- Backgrounding (`( nohup ... & )`) only inside a single-quoted `sh -c '...'` wrapper — a single-quoted string is one inert token to PS 5.1, whereas a bare `&` is a parse error. Inside those single quotes use `"$CLAUDE_PLUGIN_ROOT"` (the env var, exported to every hook process), not the `${CLAUDE_PLUGIN_ROOT}` placeholder — sh doesn't expand placeholders inside single quotes.
+- The `shell: "powershell"` hook field is NOT a platform gate: on a Mac without pwsh it throws a visible "no PowerShell executable found" error. Don't use it.
+
+`scripts/hook.sh <EventName>` is the orchestrator: stands down under Git Bash, sources env files, fail-opens on missing API key, sources `scripts/actor.sh` for actor resolution, POSTs stdin to `/api/v1/hooks/claude` with the four `x-rogue-*` headers, parses the response for a block decision (log-only), and prints the API response to stdout. `hook.ps1` does the same on Windows. Logs every invocation to `$ROGUE_LOG_FILE` (default `~/.rogue/hook.log` / `%USERPROFILE%\.rogue\hook.log`); the logged `reason` is sanitized of control characters to prevent log forgery from server-controlled text.
 
 ### Exactly-one-runs (cross-platform arbitration)
 
-Claude Code runs **all** entries for an event. The two entries are arranged so exactly one does real work per machine:
+Claude Code runs **all** entries for an event (each under the platform's hook shell — see the polyglot rules above). The two entries are arranged so exactly one does real work per machine, and the other exits 0 silently:
 
-| Environment | `sh` entry | PowerShell entry |
+| Environment (hook shell) | `sh` entry | PowerShell entry |
 |---|---|---|
-| macOS / Linux / WSL | runs (curl POST) | `powershell` absent → fails to spawn, no output |
-| native Windows + Git Bash | `uname`=MINGW/MSYS/CYGWIN → **stands down** (`{}`) | runs |
-| native Windows, no Git Bash | `sh` not found → clean fail-open (no output) | runs |
+| macOS / Linux / WSL (`sh -c`) | runs (curl POST) | `powershell` absent → 127 → `; exit 0`, silent |
+| native Windows + Git Bash (bash) | `uname`=MINGW/MSYS/CYGWIN → scripts **stand down** (`{}`) | bash finds `powershell.exe` on PATH → runs |
+| native Windows, no Git Bash (PowerShell) | `sh` not recognized (non-terminating) → `; exit 0`, silent | runs (nested `powershell` spawn) |
 
-**`sh`, not `bash`.** On bash-less Windows, `bash` resolves to the WSL launcher stub (`System32\bash.exe`), which prints UTF-16 "no installed distributions" noise that breaks Claude's JSON parse. There is no `sh.exe` stub, so `sh` cleanly fails to spawn instead. The Git Bash stand-down matters because Git Bash's `~` maps to `%USERPROFILE%` — the SAME creds `hook.ps1` reads — so without it both would POST (and double-alert on a block).
+The Git Bash stand-down matters because Git Bash's `~` maps to `%USERPROFILE%` — the SAME creds `hook.ps1` reads — so without it both entries would POST (and double-alert on a block). It lives in the *scripts* (`hook.sh`, `warn.sh`, `auto-update.sh`, `heartbeat.sh` all check `uname`), not in the command strings.
 
-**No `-File` on the PowerShell entry.** Logic loads via `[scriptblock]::Create((Get-Content ...))` so ExecutionPolicy never applies (this also survives a GPO-enforced policy, which `-ExecutionPolicy Bypass` does not). The only variable in the one-liner is `$env:CLAUDE_PLUGIN_ROOT`, resolved at runtime via `Join-Path` — it must **not** be single-quoted (literal in PowerShell).
+**No `-File` on the PowerShell entry.** Logic loads via `[scriptblock]::Create((Get-Content ...))` so ExecutionPolicy never applies (this also survives a GPO-enforced policy, which `-ExecutionPolicy Bypass` does not). The plugin root is read via `(Get-Item Env:CLAUDE_PLUGIN_ROOT).Value` at runtime — dollar-free so Git Bash can't mangle it (see polyglot rules).
 
 `scripts/warn.sh` is the SessionStart "not configured" nudge (sh path; `hook.ps1` emits the hint inline on the Windows path). `auto-update.{sh,ps1}` are the SessionStart background updaters. `heartbeat.{sh,ps1}` are the SessionStart background presence beacons — fire-and-forget `POST /api/v1/hooks/status` (JSON body: `agent_family: "claude"` fixed enum, `agent` display label from `$CLAUDE_CODE_ENTRYPOINT`, `version` from `plugin.json` via grep/sed or regex, `host`, actor fields) that registers the install in the dashboard's Coding Agents roster and learns `update_available`. Reads the plugin version without `python3` for the fresh-macOS reason below.
 
@@ -82,9 +88,9 @@ Invariants to preserve when editing hooks (apply to **both** dispatchers — kee
 
 - **Resolve env files in this precedence order** — `${CLAUDE_PLUGIN_ROOT}/env` (bundled defaults), then `/etc/rogue/env` (MDM) / `C:\ProgramData\rogue\env`, then `$HOME/.rogue-env` / `%USERPROFILE%\.rogue-env` (per-user). Later wins; process env wins over all files. `hook.sh` `source`s the files (valid POSIX sh); `hook.ps1` regex-parses the same `export KEY=value` lines and decodes the shell quoting via `ConvertFrom-ShellQuoted` so values round-trip identically. Never source from a world-writable path like `/tmp`.
 - **Actor cascade lives in `scripts/actor.sh`** (sh) / is inlined in `hook.ps1` (ps). Per-var fallback: existing env → `git config --global user.{email,name}` → `CLAUDE_CODE_USER_EMAIL` (local-part as name) → `hostname`/`whoami` (`COMPUTERNAME`/`USERNAME`) last-resort. Resolved every hook; no on-disk cache.
-- **Fail-open is layered** — the dispatcher emits `{}` on missing API key or any HTTP failure. The `sh` entries are additionally wrapped `sh ... || echo '{}'`. PowerShell entries can NOT use `|| echo` (invalid in PS 5.1), so `hook.ps1` must guarantee `{}` on every path itself.
+- **Fail-open is layered** — the dispatcher emits `{}` on missing API key or any HTTP failure, and every command string ends `; exit 0` so a dead dispatcher (missing binary, crashed script) is a silent success with empty stdout rather than a visible hook error. Never reintroduce `|| echo '{}'`-style wrappers — `||` is a PS 5.1 parse error (see the polyglot rules).
 - **`x-rogue-event` must match the hook's key** in `hooks.json`. The server routes on this header. There is **no** `x-rogue-source` header (that is cursor-only).
-- Block detection covers `"decision":"block"`, `"continue":false`, `"permissionDecision":"deny"`, `"behavior":"deny"`; reason from `permissionDecisionReason`→`reason`→`stopReason`→`message`. On block both dispatchers relay the response verbatim AND fire the native modal (unless `CLAUDE_CODE_ENTRYPOINT=cli`).
+- Block detection covers `"decision":"block"`, `"continue":false`, `"permissionDecision":"deny"`, `"behavior":"deny"`; reason from `permissionDecisionReason`→`reason`→`stopReason`→`message`. It exists for LOGGING ONLY (`outcome=block reason=...` in the hook log) — both dispatchers relay the response verbatim and Claude (CLI and Desktop/Cowork) renders the block natively. Don't reintroduce a local modal/notification.
 - Timeouts: every hook `timeout` in `hooks.json` is **20s**; the synchronous dispatcher's HTTP client (`hook.sh` `curl --max-time`, `hook.ps1` `Invoke-WebRequest -TimeoutSec`) is **15s** so a slow request fails *inside* the hook budget (clean fail-open) rather than being hard-killed at the timeout. The budget is generous because Windows pays a PowerShell cold-start before the request even begins; the happy path is unaffected (the timeout only bites on a hung request). The detached SessionStart scripts (`heartbeat`, `auto-update`) run in the background, so their own HTTP timeouts are independent of the hook timeout.
 
 ## Releasing
@@ -96,9 +102,10 @@ Invariants to preserve when editing hooks (apply to **both** dispatchers — kee
 ## Things that look weird but are intentional
 
 - Hooks are shell one-liners, not script files referenced directly. This keeps the manifest self-contained for `/plugin install`.
-- Each event has **two** entries (`sh` + PowerShell). On any given machine only one produces output; the other's binary is missing or it stands down. Asymmetric but correct per platform — see the exactly-one-runs table.
+- Each event has **two** entries (`sh` + PowerShell). On any given machine only one produces output; the other hits a missing binary (silenced by `; exit 0`) or its script stands down. Asymmetric but correct per platform — see the exactly-one-runs table.
+- Command strings look over-defensive (`; exit 0` everywhere, dollar-free PowerShell, `sh -c '...'` around backgrounding). Each quirk dodges a real parse/expansion failure in one of the three hook shells — `tests/test_hooks_json.sh` enforces them; don't "clean them up".
 - The PowerShell entry loads logic via `[scriptblock]::Create((Get-Content ...))` rather than `-File`, to dodge ExecutionPolicy/GPO without `-ExecutionPolicy Bypass`. Don't "simplify" it to `-File`.
-- The `SessionStart` event has **four separate hook groups** (auto-update kick-off, heartbeat kick-off, unconfigured-warning, API POST). They run independently so a failure in one doesn't suppress the others. auto-update/heartbeat are detached (`nohup ... &` on sh; `Start-Process -WindowStyle Hidden` on PowerShell) with short timeouts — the hook returns immediately. Don't "fix" the short timeout.
+- The `SessionStart` event has **four separate hook groups** (auto-update kick-off, heartbeat kick-off, unconfigured-warning, API POST). They run independently so a failure in one doesn't suppress the others. auto-update/heartbeat are detached (`sh -c '( nohup ... & )'` on sh; `Start-Process -WindowStyle Hidden` on PowerShell) with short timeouts — the hook returns immediately. Don't "fix" the short timeout.
 - Release tarballs deliberately omit BOTH the version and an OS suffix from the filename, so `/releases/latest/download/rogue-plugin-claude.tar.gz` stays stable. The package is cross-platform by content (ships `.sh` and `.ps1`).
 - `install.sh` / `install.ps1` install via the Claude CLI marketplace (git clone), NOT by downloading the tarball. The tarball exists for `compile-customer-plugin.sh` (MDM bundles).
 - `rgx!` prompt prefix is a server-side convention (false-positive escape hatch). The plugin itself doesn't parse it — the API does.
