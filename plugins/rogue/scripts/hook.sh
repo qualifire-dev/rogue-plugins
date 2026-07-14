@@ -72,43 +72,9 @@ if [ "$BLOCK" = "1" ]; then
   [ -z "$REASON" ] && REASON=$(printf '%s' "$RESP" | sed -E -n 's/.*"message"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' | head -1)
   [ -z "$REASON" ] && REASON="prompt blocked"
 
+  # No local alert: Claude (CLI and Desktop/Cowork) shows the block reason
+  # natively now, so the response relay below is the whole user-facing story.
   log "outcome=block reason=\"$(sanitize "$REASON")\""
-  if [ "${CLAUDE_CODE_ENTRYPOINT:-}" != "cli" ]; then
-    # Build a clear, self-explanatory alert: an outcome+what title, then the
-    # server reason under a "Why:" label, then the override instruction. Naming
-    # the blocked thing (prompt / tool call) and the fix makes the modal
-    # actionable instead of dumping a raw detection code.
-    case "$EVENT" in
-      UserPromptSubmit)            NOUN="prompt" ;;
-      PreToolUse|PermissionRequest) NOUN="tool call" ;;
-      *)                           NOUN="action" ;;
-    esac
-    ALERT_TITLE="⛔ Rogue blocked this $NOUN"
-    ALERT_MSG="Why:
-$REASON"
-    # Only add the override line if the reason doesn't already explain rgx!,
-    # so we don't print the instruction twice.
-    case "$REASON" in
-      *rgx!*) : ;;
-      *) ALERT_MSG="$ALERT_MSG
-
-To allow it: prepend \"rgx!\" to your prompt and resend (marks it a false positive)." ;;
-    esac
-    # Background the alert so hook.sh returns immediately. Capture exit code
-    # afterward so TCC denials / osascript failures become visible in the log.
-    #
-    # The trailing `>/dev/null 2>&1 </dev/null` redirects the SUBSHELL's own fds —
-    # not just security-alert.sh's. Without it the subshell inherits hook.sh's
-    # stdout/stderr (the pipe Claude reads) and, because it waits for the modal to
-    # capture alert_rc, holds that pipe OPEN until the dialog is dismissed. Claude
-    # waits for stdout EOF up to the hook `timeout`, so a dismissal slower than the
-    # timeout makes Claude time the hook out and fail-open — silently letting a
-    # blocked prompt through. Detaching the subshell's fds lets hook.sh reach EOF
-    # the instant it exits, so the block applies regardless of when the modal closes.
-    ( bash "${CLAUDE_PLUGIN_ROOT}/scripts/security-alert.sh" "$ALERT_TITLE" "$ALERT_MSG" critical >/dev/null 2>&1; log "alert_rc=$? entrypoint=${CLAUDE_CODE_ENTRYPOINT:-unset}" ) >/dev/null 2>&1 </dev/null &
-  else
-    log "alert_skipped=cli"
-  fi
 else
   log "outcome=allow"
 fi

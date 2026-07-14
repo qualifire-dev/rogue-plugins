@@ -16,15 +16,16 @@
 # which -ExecutionPolicy Bypass does not):
 #
 #   powershell -NoProfile -NonInteractive -Command \
-#     "& ([scriptblock]::Create((Get-Content -Raw -LiteralPath (Join-Path $env:CLAUDE_PLUGIN_ROOT 'scripts/hook.ps1')))) <Event>"
+#     "& ([scriptblock]::Create((Get-Content -Raw -LiteralPath (Join-Path (Get-Item Env:CLAUDE_PLUGIN_ROOT).Value 'scripts/hook.ps1')))) <Event>" ; exit 0
 #
-# CLAUDE_PLUGIN_ROOT is a process ENVIRONMENT VARIABLE, so PowerShell resolves
-# $env:CLAUDE_PLUGIN_ROOT at runtime via Join-Path - it must NOT be
-# single-quoted (single quotes are literal in PowerShell and would never expand).
+# CLAUDE_PLUGIN_ROOT is a process ENVIRONMENT VARIABLE, read dollar-free as
+# (Get-Item Env:CLAUDE_PLUGIN_ROOT).Value - on Windows-with-Git-Bash the whole
+# command string is parsed by bash first, which would expand and mangle a
+# double-quoted $env:CLAUDE_PLUGIN_ROOT.
 #
 # This script mirrors hook.sh stage-for-stage: collect creds, resolve actor,
-# POST stdin to /api/v1/hooks/claude, detect a block decision, fire a native
-# modal (security-alert.ps1) on block, and relay the server response verbatim.
+# POST stdin to /api/v1/hooks/claude, detect + log a block decision, and relay
+# the server response verbatim (Claude shows the block reason natively).
 #
 # Fail-open everywhere: missing API key, network error, non-200, empty body all
 # yield `{}` on stdout, exit 0. Claude Code must never block because Rogue
@@ -277,7 +278,6 @@ Log "raw=$(Sanitize $respHead)"
 #   "permissionDecision":"deny"  PreToolUse (inside hookSpecificOutput)
 #   "behavior":"deny"            PermissionRequest (inside hookSpecificOutput.decision)
 $blockRe = '"decision"\s*:\s*"block"|"continue"\s*:\s*false|"permissionDecision"\s*:\s*"deny"|"behavior"\s*:\s*"deny"'
-$fireAlert = $false
 if ($resp -imatch $blockRe) {
     # Extract reason (first match across the field names the formatter uses).
     $reason = $null
@@ -286,59 +286,12 @@ if ($resp -imatch $blockRe) {
     }
     if (-not $reason) { $reason = 'prompt blocked' }
 
+    # No local alert: Claude (CLI and Desktop/Cowork) shows the block reason
+    # natively now, so the response relay below is the whole user-facing story.
     Log "outcome=block reason=`"$(Sanitize $reason)`""
-    if ($env:CLAUDE_CODE_ENTRYPOINT -ne 'cli') {
-        switch ($EventName) {
-            'UserPromptSubmit'              { $noun = 'prompt' }
-            { $_ -in 'PreToolUse','PermissionRequest' } { $noun = 'tool call' }
-            default                         { $noun = 'action' }
-        }
-        $alertTitle = "Rogue blocked this $noun"
-        $alertMsg = "Why:`n$reason"
-        if ($reason -notlike '*rgx!*') {
-            $alertMsg += "`n`nTo allow it: prepend `"rgx!`" to your prompt and resend (marks it a false positive)."
-        }
-        $fireAlert = $true
-    } else {
-        Log "alert_skipped=cli"
-    }
 } else {
     Log "outcome=allow"
 }
 
-# Relay the decision to Claude FIRST and flush it, BEFORE launching the modal, so
-# the block is delivered even if the modal lingers on screen. The modal runs in a
-# separate, non-blocking Start-Process (its own fds), so it can never hold Claude's
-# stdout open or delay the decision - the sibling hook.sh fix detaches the
-# backgrounded alert's fds for the same reason.
 Emit-Json $resp
-
-if ($fireAlert) {
-    # Launch the modal detached (separate process, own handles) so the hook returns
-    # immediately. Title/msg/severity ride env vars (the child inherits them), so the
-    # launched command is constant.
-    #
-    # Pass it as a Base64 (UTF-16LE) -EncodedCommand, NOT -Command. Start-Process
-    # joins -ArgumentList with spaces and does NOT quote elements, so a -Command
-    # string containing spaces/quotes/parens (like the scriptblock bootstrap) reaches
-    # the child mangled and never runs (this is why the alert silently didn't show).
-    # A Base64 blob has no spaces, so it survives the array-join intact. EncodedCommand
-    # also sidesteps ExecutionPolicy/GPO (no -File on disk).
-    try {
-        $alert = Join-Path $pluginRoot 'scripts\security-alert.ps1'
-        if (Test-Path -LiteralPath $alert) {
-            $env:ROGUE_ALERT_TITLE = $alertTitle
-            $env:ROGUE_ALERT_MSG = $alertMsg
-            $env:ROGUE_ALERT_SEVERITY = 'critical'
-            $alertEsc = $alert.Replace("'", "''")
-            $boot = "& ([scriptblock]::Create((Get-Content -Raw -LiteralPath '$alertEsc')))"
-            $enc = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($boot))
-            Start-Process -FilePath 'powershell' -WindowStyle Hidden -ArgumentList @(
-                '-NoProfile', '-NonInteractive', '-EncodedCommand', $enc) | Out-Null
-            Log "alert_launched=1 entrypoint=$($env:CLAUDE_CODE_ENTRYPOINT)"
-        } else {
-            Log "alert_skipped=missing_script"
-        }
-    } catch { Log "alert_error=$(Sanitize $_.Exception.Message)" }
-}
 exit 0

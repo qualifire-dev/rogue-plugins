@@ -30,7 +30,7 @@ export ROGUE_BASE_URL=http://127.0.0.1:${PORT}
 EOF
 
 # Run with a clean HOME holding our env file. CLAUDE_CODE_ENTRYPOINT=cli so the
-# entrypoint gate passes AND the security-alert is skipped (no modal in CI).
+# entrypoint gate passes.
 # CLAUDE_PLUGIN_ROOT points at the real plugin so actor.sh resolves.
 run_dispatcher() {
   local tmp_home
