@@ -1,0 +1,123 @@
+---
+name: status
+description: Check Rogue Security AIDR connection status, active rulesets, identity, and recent hook activity for Gemini CLI
+---
+
+# Rogue Security Status
+
+Check the current status of the Rogue Security AIDR integration for Gemini CLI.
+The hooks resolve credentials from three locations in order (later wins): the
+extension's bundled `env` (managed installs), `/etc/rogue/env` (MDM), and
+`~/.rogue-env` (per-user setup). This command checks all three.
+
+**Pick the command variant for the user's OS.** Use the macOS / Linux (bash)
+commands by default; use the Windows (PowerShell) block at the end on native
+Windows. There, the files are `C:\ProgramData\rogue\env` (MDM) and
+`%USERPROFILE%\.rogue-env` (per-user).
+
+## Step 1: Resolve credentials and report sources
+
+```bash
+resolve() {
+  for f in "$HOME/.gemini/extensions/rogue/env" /etc/rogue/env "$HOME/.rogue-env"; do
+    [ -r "$f" ] && . "$f" && echo "  $f" >&2
+  done
+}
+resolve 2>/tmp/rogue-src
+echo "Credential sources detected:"; cat /tmp/rogue-src 2>/dev/null || echo "  (none)"
+[ -n "${ROGUE_API_KEY:-}" ] && echo "API key resolved: ...${ROGUE_API_KEY: -4}" || echo "API key: not resolved"
+```
+
+If no source is found or `ROGUE_API_KEY` is empty, tell the user to run `/setup`
+and stop here.
+
+## Step 2: Test connection + register heartbeat
+
+Hit the status endpoint with the resolved key. This validates the key, registers
+this install in the dashboard's Coding Agents roster, and reports whether a newer
+version exists. Read the extension version from the manifest without `python3`
+(absent on a fresh macOS):
+
+```bash
+for f in "$HOME/.gemini/extensions/rogue/env" /etc/rogue/env "$HOME/.rogue-env"; do [ -r "$f" ] && . "$f"; done
+PJ="$HOME/.gemini/extensions/rogue/gemini-extension.json"
+VER=$(grep -oE '"version"[[:space:]]*:[[:space:]]*"[0-9][^"]*"' "$PJ" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+curl -s -w "\n%{http_code}" -X POST \
+  "${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/status" \
+  -H "x-rogue-api-key: $ROGUE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"agent_family\":\"gemini\",\"agent\":\"gemini_cli\",\"version\":\"${VER:-unknown}\",\"host\":\"$(hostname)\",\"actor_email\":\"${ROGUE_ACTOR_EMAIL:-}\",\"actor_name\":\"${ROGUE_ACTOR_NAME:-}\"}"
+```
+
+HTTP 200 = connected. Report `organization.name`, running vs latest version, and
+`update_available`. HTTP 401 → key invalid (compare against the API keys
+dashboard). No response → check network reachability to `api.rogue.security`.
+
+## Step 3: Fetch configuration
+
+```bash
+for f in "$HOME/.gemini/extensions/rogue/env" /etc/rogue/env "$HOME/.rogue-env"; do [ -r "$f" ] && . "$f"; done
+curl -s -H "x-rogue-api-key: $ROGUE_API_KEY" \
+  "${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/config"
+```
+
+Display:
+- **Mode**: `settings.mode` (enforce or monitor)
+- **Fail-open**: `settings.failOpen`
+- **Gemini CLI events**: `tools.gemini_cli.monitoredEvents` and `tools.gemini_cli.blockingEvents`
+- **Active rulesets**: for each ruleset, name, category, mode, severity
+
+## Step 4: Show identity + recent hook activity
+
+```bash
+for f in "$HOME/.gemini/extensions/rogue/env" /etc/rogue/env "$HOME/.rogue-env"; do [ -r "$f" ] && . "$f"; done
+echo "Actor email: ${ROGUE_ACTOR_EMAIL:-(unset)}"
+echo "Actor name:  ${ROGUE_ACTOR_NAME:-(unset)}"
+echo "--- recent hook activity ---"
+tail -n 20 "${ROGUE_LOG_FILE:-$HOME/.rogue/hook.log}" 2>/dev/null || echo "no hook activity yet"
+```
+
+## Step 5: Summary
+
+Present a clean summary: credential sources, connection status, mode + ruleset
+count, identity, and a snippet of recent hook activity. Confirm whether the
+integration is active.
+
+## Step 6: False-positive escape hatch
+
+Tell the user: **Was a prompt blocked by mistake?** Prepend `rgx!` to the next
+prompt and resubmit — Rogue allows that one prompt and marks the previous
+detection as a false positive. The override is per-prompt only.
+
+## Windows (PowerShell)
+
+Run this single block instead of Steps 1–4:
+
+```powershell
+$creds = @{}
+foreach ($f in @("$env:USERPROFILE\.gemini\extensions\rogue\env", 'C:\ProgramData\rogue\env', "$env:USERPROFILE\.rogue-env")) {
+  if (-not (Test-Path -LiteralPath $f)) { continue }
+  Write-Host "  $f"
+  foreach ($line in (Get-Content -LiteralPath $f)) {
+    if ($line -match '^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)=(.+)$') {
+      $creds[$Matches[1]] = $Matches[2].Trim() -replace "^'(.*)'$",'$1' -replace '^"(.*)"$','$1'
+    }
+  }
+}
+$key = $creds['ROGUE_API_KEY']
+if (-not $key) { 'API key: not resolved — run /setup'; return }
+'API key resolved: ...' + $key.Substring([Math]::Max(0,$key.Length-4))
+$base = if ($creds['ROGUE_BASE_URL']) { $creds['ROGUE_BASE_URL'].TrimEnd('/') } else { 'https://api.rogue.security' }
+$pj = "$env:USERPROFILE\.gemini\extensions\rogue\gemini-extension.json"
+$ver = 'unknown'; if (Test-Path $pj) { try { $ver = (Get-Content -Raw $pj | ConvertFrom-Json).version } catch {} }
+$body = @{ agent_family='gemini'; agent='gemini_cli'; version=$ver; host=$env:COMPUTERNAME; actor_email=[string]$creds['ROGUE_ACTOR_EMAIL']; actor_name=[string]$creds['ROGUE_ACTOR_NAME'] } | ConvertTo-Json -Compress
+try {
+  $r = Invoke-WebRequest -Uri "$base/api/v1/hooks/status" -Method Post -Headers @{ 'x-rogue-api-key'=$key } -ContentType 'application/json' -Body ([Text.Encoding]::UTF8.GetBytes($body)) -UseBasicParsing -TimeoutSec 10
+  "Connected (HTTP $($r.StatusCode)): $($r.Content)"
+} catch { "Status check failed: $($_.Exception.Message)" }
+"Actor email: $($creds['ROGUE_ACTOR_EMAIL'])"
+"Actor name:  $($creds['ROGUE_ACTOR_NAME'])"
+Get-Content -Tail 20 "$env:USERPROFILE\.rogue\hook.log" -ErrorAction SilentlyContinue
+```
+
+Report the same fields as Step 2.

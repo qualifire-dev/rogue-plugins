@@ -28,16 +28,18 @@ $env:ROGUE_API_KEY='rsk_xxx'; $env:ROGUE_ACTOR_EMAIL='you@co.com'; iwr -useb htt
 ```
 
 The one installer detects every supported coding agent and installs the matching
-Rogue plugin into each — **Claude Code**, **OpenAI Codex**, and **Cursor** — writing
-the shared `~/.rogue-env` (`%USERPROFILE%\.rogue-env` on Windows) once. Claude and
-Codex install through their native plugin CLIs (`claude plugin install` /
-`codex plugin add`); **Cursor has no plugin CLI**, so its plugin is copied into
-`~/.cursor/plugins/local/rogue` from the release tarball. The installer validates and
-writes your API key, confirms your actor identity, and on macOS/Linux configures a
-`Rogue Security` status badge below the Claude prompt (🟢 connected / 🔴 not set up).
+Rogue plugin into each — **Claude Code**, **OpenAI Codex**, **Cursor**, and
+**Gemini CLI** — writing the shared `~/.rogue-env` (`%USERPROFILE%\.rogue-env` on
+Windows) once. Claude and Codex install through their native plugin CLIs
+(`claude plugin install` / `codex plugin add`); **Cursor has no plugin CLI**, so
+its plugin is copied into `~/.cursor/plugins/local/rogue` from the release tarball;
+**Gemini CLI** installs from the release tarball via its native
+`gemini extensions install`. The installer validates and writes your API key,
+confirms your actor identity, and on macOS/Linux configures a `Rogue Security`
+status badge below the Claude prompt (🟢 connected / 🔴 not set up).
 
 To target specific agents instead of all detected ones, pass `--claude`, `--codex`,
-and/or `--cursor` (PowerShell: `-Claude` / `-Codex` / `-Cursor`):
+`--cursor`, and/or `--gemini` (PowerShell: `-Claude` / `-Codex` / `-Cursor` / `-Gemini`):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/qualifire-dev/rogue-plugins/main/install.sh | bash -s -- --cursor

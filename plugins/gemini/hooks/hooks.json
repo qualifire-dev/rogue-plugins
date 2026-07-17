@@ -1,0 +1,72 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${extensionPath}${/}scripts${/}hook.mjs\" SessionStart",
+            "timeout": 20000
+          }
+        ]
+      }
+    ],
+    "BeforeAgent": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${extensionPath}${/}scripts${/}hook.mjs\" BeforeAgent",
+            "timeout": 20000
+          }
+        ]
+      }
+    ],
+    "BeforeModel": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${extensionPath}${/}scripts${/}hook.mjs\" BeforeModel",
+            "timeout": 20000
+          }
+        ]
+      }
+    ],
+    "AfterAgent": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${extensionPath}${/}scripts${/}hook.mjs\" AfterAgent",
+            "timeout": 20000
+          }
+        ]
+      }
+    ],
+    "BeforeTool": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${extensionPath}${/}scripts${/}hook.mjs\" BeforeTool",
+            "timeout": 20000
+          }
+        ]
+      }
+    ],
+    "AfterTool": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${extensionPath}${/}scripts${/}hook.mjs\" AfterTool",
+            "timeout": 20000
+          }
+        ]
+      }
+    ]
+  }
+}
