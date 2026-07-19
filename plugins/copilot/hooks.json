@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "( nohup bash \"${PLUGIN_ROOT}/scripts/heartbeat.sh\" >/dev/null 2>&1 & ) ; exit 0",
+        "powershell": "Start-Process -FilePath 'powershell' -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path '${PLUGIN_ROOT}' 'scripts/heartbeat.ps1') -WindowStyle Hidden ; exit 0",
+        "timeoutSec": 5
+      },
+      {
+        "type": "command",
+        "bash": "bash \"${PLUGIN_ROOT}/scripts/hook.sh\" sessionStart ; exit 0",
+        "powershell": "try { & ([scriptblock]::Create((Get-Content -Raw -LiteralPath (Join-Path '${PLUGIN_ROOT}' 'scripts/hook.ps1')))) sessionStart '${PLUGIN_ROOT}' } catch { '{}' } ; exit 0",
+        "timeoutSec": 10
+      }
+    ],
+    "userPromptSubmitted": [
+      {
+        "type": "command",
+        "bash": "bash \"${PLUGIN_ROOT}/scripts/hook.sh\" userPromptSubmitted ; exit 0",
+        "powershell": "try { & ([scriptblock]::Create((Get-Content -Raw -LiteralPath (Join-Path '${PLUGIN_ROOT}' 'scripts/hook.ps1')))) userPromptSubmitted '${PLUGIN_ROOT}' } catch { '{}' } ; exit 0",
+        "timeoutSec": 30
+      }
+    ],
+    "preToolUse": [
+      {
+        "type": "command",
+        "matcher": ".*",
+        "bash": "bash \"${PLUGIN_ROOT}/scripts/hook.sh\" preToolUse ; exit 0",
+        "powershell": "try { & ([scriptblock]::Create((Get-Content -Raw -LiteralPath (Join-Path '${PLUGIN_ROOT}' 'scripts/hook.ps1')))) preToolUse '${PLUGIN_ROOT}' } catch { '{}' } ; exit 0",
+        "timeoutSec": 30
+      }
+    ],
+    "postToolUse": [
+      {
+        "type": "command",
+        "matcher": ".*",
+        "bash": "bash \"${PLUGIN_ROOT}/scripts/hook.sh\" postToolUse ; exit 0",
+        "powershell": "try { & ([scriptblock]::Create((Get-Content -Raw -LiteralPath (Join-Path '${PLUGIN_ROOT}' 'scripts/hook.ps1')))) postToolUse '${PLUGIN_ROOT}' } catch { '{}' } ; exit 0",
+        "timeoutSec": 30
+      }
+    ]
+  }
+}

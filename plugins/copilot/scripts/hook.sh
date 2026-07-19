@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# Rogue Security hook bridge for GitHub Copilot CLI — bash implementation.
+# Usage: hook.sh <eventName>   (preToolUse | postToolUse | userPromptSubmitted | sessionStart)
+#
+# Reads one Copilot hook event JSON on stdin, POSTs it to the rogue-api
+# /hooks/copilot route, and relays the native Copilot decision verbatim on
+# stdout. PURE RELAY: no block-detection regex, no local modal — Copilot renders
+# the native deny shape ({"permissionDecision":"deny",...}) itself.
+#
+# Copilot selects the `bash` command on macOS/Linux and the `powershell` command
+# on Windows (see hooks.json), so — unlike the Claude bridge — there is no
+# exactly-one-runs arbitration and no Git-Bash stand-down: exactly one script
+# runs per platform, chosen by Copilot.
+#
+# FAIL-OPEN IS SAFETY-CRITICAL HERE. Copilot's preToolUse hook is fail-CLOSED: a
+# non-zero exit (or exit 2) DENIES the tool call. So this script MUST always
+# `exit 0` and emit `{}` on any error (missing key, network failure, non-200,
+# empty body). Never `set -e`; never let curl propagate a non-zero exit. A block
+# is carried in the relayed JSON body on stdout, never via the exit code.
+#
+# Credential resolution (later file wins; process env wins over all):
+#   1. ${PLUGIN_ROOT}/env        (baked into a compiled customer plugin)
+#   2. /etc/rogue/env            (MDM-provisioned)
+#   3. $HOME/.rogue-env          (per-user / installer-written)
+
+EVENT="$1"
+
+# Self-locate the plugin root from $0 (the path Copilot invoked us with:
+# <root>/scripts/hook.sh). Fall back to the env token if that ever fails.
+PLUGIN_ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." 2>/dev/null && pwd)"
+[ -n "$PLUGIN_ROOT" ] || PLUGIN_ROOT="${COPILOT_PLUGIN_ROOT:-${PLUGIN_ROOT:-.}}"
+
+# Env precedence (later wins): bundled → MDM → per-user.
+[ -r "${PLUGIN_ROOT}/env" ] && . "${PLUGIN_ROOT}/env"
+[ -r /etc/rogue/env ]       && . /etc/rogue/env
+[ -r "$HOME/.rogue-env" ]   && . "$HOME/.rogue-env"
+
+ROGUE_LOG_FILE="${ROGUE_LOG_FILE:-$HOME/.rogue/hook.log}"
+log() {
+  mkdir -p "$(dirname "$ROGUE_LOG_FILE")" 2>/dev/null
+  printf '%s provider=github_copilot event=%s %s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$EVENT" "$*" >> "$ROGUE_LOG_FILE" 2>/dev/null
+}
+sanitize() { printf '%s' "$1" | tr -d '\000-\037\177'; }
+
+# SessionStart is observe-only: never POSTed. The heartbeat is fired by a
+# separate hooks.json entry; here we only surface the "not configured" hint.
+if [ "$EVENT" = "sessionStart" ]; then
+  if [ -z "${ROGUE_API_KEY:-}" ]; then
+    log "outcome=unconfigured"
+    printf '{"additionalContext":"[Rogue Security] Not configured. Run /rogue:setup to connect your API key."}'
+  else
+    log "outcome=session"
+    echo '{}'
+  fi
+  exit 0
+fi
+
+if [ -z "${ROGUE_API_KEY:-}" ]; then
+  log "outcome=unconfigured"
+  echo '{}'
+  exit 0
+fi
+
+[ -r "${PLUGIN_ROOT}/scripts/actor.sh" ] && . "${PLUGIN_ROOT}/scripts/actor.sh"
+
+URL="${ROGUE_API_URL:-${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/copilot}"
+
+# Capture body + HTTP status. -w appends a final line "<code>"; on any transport
+# failure curl exits non-zero and the code is 000. Relay the body ONLY on a clean
+# HTTP 200 so an error page (401/404/500) is never handed to Copilot as a decision.
+RAW=$(curl -sS -X POST "$URL" \
+  -H "x-rogue-api-key: $ROGUE_API_KEY" \
+  -H "x-rogue-event: $EVENT" \
+  -H "x-rogue-actor-email: $ROGUE_ACTOR_EMAIL" \
+  -H "x-rogue-actor-name: $ROGUE_ACTOR_NAME" \
+  -H 'Content-Type: application/json' \
+  --data-binary @- --max-time 15 -w '\n%{http_code}')
+RC=$?
+CODE=$(printf '%s' "$RAW" | tail -n1)
+BODY=$(printf '%s' "$RAW" | sed '$d')
+
+log "http=$CODE rc=$RC raw=$(sanitize "$BODY" | head -c 400)"
+
+# Fail-open on transport error or any non-200: emit a clean allow.
+if [ "$RC" -ne 0 ] || [ "$CODE" != "200" ] || [ -z "$BODY" ]; then
+  log "outcome=allow http=$CODE rc=$RC"
+  echo '{}'
+  exit 0
+fi
+
+# rogue-api already returns the correct native Copilot shape; relay it verbatim.
+printf '%s' "$BODY"
+exit 0
