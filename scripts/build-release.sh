@@ -105,6 +105,34 @@ if [ -d "plugins/cursor" ]; then
   rm -rf "$CRSTAGE"
 fi
 
+# ── Gemini CLI extension tarball ─────────────────────────────────────────────
+# Gemini has no plugin CLI marketplace; the one-line installer downloads THIS
+# tarball, extracts it, and runs `gemini extensions install <dir>`. So — unlike
+# the Claude/Codex/Cursor tarballs, which stage the plugin UNDER plugins/<x>/ —
+# the Gemini archive's TOP DIR *is* the extension: gemini-extension.json sits at
+# the archive root, which is what `gemini extensions install` requires.
+# Versionless name keeps the /releases/latest/download/ URL stable. Cross-platform
+# by content (one Node .mjs hook; no OS-specific scripts to split).
+if [ -d "plugins/gemini" ]; then
+  GEMINI_VERSION=$(grep -oE '"version"[[:space:]]*:[[:space:]]*"[0-9][^"]*"' \
+    plugins/gemini/gemini-extension.json 2>/dev/null | head -1 \
+    | grep -oE '[0-9]+\.[0-9]+\.[0-9]+') && [ -n "$GEMINI_VERSION" ] || {
+    echo "✗ unable to read plugins/gemini/gemini-extension.json" >&2; exit 1
+  }
+  echo "→ gemini extension version: $GEMINI_VERSION"
+  GMSTAGE=$(mktemp -d)
+  GMTOP="$GMSTAGE/rogue-plugin-gemini"
+  mkdir -p "$GMTOP"
+  # Copy the extension CONTENTS to the archive top dir (manifest at root).
+  cp -R plugins/gemini/. "$GMTOP/"
+  cp LICENSE "$GMTOP/" 2>/dev/null || true
+  GMOUT="$DIST/rogue-plugin-gemini.tar.gz"
+  tar -czf "$GMOUT" -C "$GMSTAGE" "rogue-plugin-gemini"
+  GMSIZE=$(wc -c < "$GMOUT" | awk '{print $1}')
+  echo "✓ $GMOUT  ($GMSIZE bytes, version $GEMINI_VERSION)"
+  rm -rf "$GMSTAGE"
+fi
+
 echo ""
 echo "dist/:"
 ls -la "$DIST"

@@ -36,7 +36,9 @@
 .PARAMETER Codex
     Install only for OpenAI Codex.
 .PARAMETER Cursor
-    Install only for Cursor. With no agent switch, every detected agent is installed.
+    Install only for Cursor.
+.PARAMETER Gemini
+    Install only for Gemini CLI. With no agent switch, every detected agent is installed.
 #>
 [CmdletBinding()]
 param(
@@ -48,7 +50,8 @@ param(
     [switch]$NonInteractive,
     [switch]$Claude,
     [switch]$Codex,
-    [switch]$Cursor
+    [switch]$Cursor,
+    [switch]$Gemini
 )
 
 $ErrorActionPreference = 'Stop'
@@ -83,23 +86,28 @@ Write-Host "Rogue Security (Windows)" -ForegroundColor Cyan
 # every supported agent. claude/codex ship a CLI on PATH; Cursor's `cursor` command is
 # opt-in, so detection also accepts %USERPROFILE%\.cursor. An explicitly selected CLI
 # agent still needs its binary; Cursor is a plain file copy, so it installs regardless.
-$explicit = $Claude -or $Codex -or $Cursor
+$explicit = $Claude -or $Codex -or $Cursor -or $Gemini
 if ($explicit) {
     $hasClaude = [bool]$Claude
     $hasCodex  = [bool]$Codex
     $hasCursor = [bool]$Cursor
+    $hasGemini = [bool]$Gemini
     if ($hasClaude -and -not (Get-Command claude -ErrorAction SilentlyContinue)) {
         Die "-Claude requested but the 'claude' CLI is not on PATH. Install Claude Code (https://claude.com/code) first."
     }
     if ($hasCodex -and -not (Get-Command codex -ErrorAction SilentlyContinue)) {
         Die "-Codex requested but the 'codex' CLI is not on PATH. Install OpenAI Codex first."
     }
+    if ($hasGemini -and -not (Get-Command gemini -ErrorAction SilentlyContinue)) {
+        Die "-Gemini requested but the 'gemini' CLI is not on PATH. Install Gemini CLI (https://geminicli.com) first."
+    }
 } else {
     $hasClaude = [bool](Get-Command claude -ErrorAction SilentlyContinue)
     $hasCodex  = [bool](Get-Command codex  -ErrorAction SilentlyContinue)
     $hasCursor = [bool](Get-Command cursor -ErrorAction SilentlyContinue) -or (Test-Path (Join-Path $env:USERPROFILE '.cursor'))
-    if (-not ($hasClaude -or $hasCodex -or $hasCursor)) {
-        Die "No supported coding agent found (looked for: claude, codex, cursor). Install Claude Code (https://claude.com/code), OpenAI Codex, or Cursor (https://cursor.com) first."
+    $hasGemini = [bool](Get-Command gemini -ErrorAction SilentlyContinue)
+    if (-not ($hasClaude -or $hasCodex -or $hasCursor -or $hasGemini)) {
+        Die "No supported coding agent found (looked for: claude, codex, cursor, gemini). Install Claude Code (https://claude.com/code), OpenAI Codex, Cursor (https://cursor.com), or Gemini CLI (https://geminicli.com) first."
     }
 }
 # Claude shells out to git to clone the marketplace; git is required only for it.
@@ -280,6 +288,45 @@ if ($hasCursor) {
         Warn2 'Fully quit and reopen Cursor, then run /rogue:status to verify.'
     } catch {
         Warn2 "Cursor plugin not installed ($($_.Exception.Message)). If the asset isn't published yet, re-run the installer once it is."
+    } finally {
+        Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+    }
+}
+
+# Gemini has a native extension CLI, but `gemini extensions install <github-url>`
+# expects the manifest at the source root, which the monorepo root is not. So we
+# download the release tarball (whose top dir IS the extension, manifest at root),
+# extract it with `tar` (bundled in Windows 10+), and `gemini extensions install
+# <dir>`. Gemini makes its own managed copy, so the temp dir is disposable.
+# Re-running upgrades (uninstall-then-install). Non-fatal.
+if ($hasGemini) {
+    Write-Host ""
+    Write-Host "Rogue Security - Gemini CLI" -ForegroundColor Cyan
+    $asset = 'rogue-plugin-gemini.tar.gz'
+    if ($env:ROGUE_PLUGIN_VERSION) {
+        $url = "https://github.com/$PluginRepo/releases/download/$($env:ROGUE_PLUGIN_VERSION)/$asset"
+    } else {
+        $url = "https://github.com/$PluginRepo/releases/latest/download/$asset"
+    }
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("rogue-gemini-" + [System.IO.Path]::GetRandomFileName())
+    New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+    try {
+        Log "Downloading extension $asset"
+        $tarball = Join-Path $tmp 'p.tar.gz'
+        Invoke-WebRequest -Uri $url -OutFile $tarball -UseBasicParsing -TimeoutSec 60 -ErrorAction Stop
+        & tar -xzf $tarball -C $tmp
+        if ($LASTEXITCODE -ne 0) { throw "Could not extract the Gemini extension tarball (is 'tar' available?)." }
+        $src = Get-ChildItem -Path $tmp -Recurse -File -Filter 'gemini-extension.json' | Select-Object -First 1
+        if (-not $src) { throw "Gemini manifest missing in download." }
+        $srcDir = $src.Directory.FullName
+        # Reinstall cleanly so a re-run upgrades. Ignore uninstall errors (first run).
+        try { & gemini extensions uninstall rogue 2>&1 | Out-Null } catch {}
+        & gemini extensions install $srcDir --consent 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "gemini extensions install failed." }
+        Ok "Extension installed via gemini extensions install"
+        Warn2 'Gemini skips untrusted hooks - open /hooks in Gemini CLI and trust the Rogue entries once, then restart Gemini CLI.'
+    } catch {
+        Warn2 "Gemini extension not installed ($($_.Exception.Message)). If the asset isn't published yet, re-run the installer once it is."
     } finally {
         Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
     }

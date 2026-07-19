@@ -28,6 +28,7 @@
 #   --claude               install only for Claude Code (repeatable with the others)
 #   --codex                install only for OpenAI Codex
 #   --cursor               install only for Cursor
+#   --gemini               install only for Gemini CLI
 #                          (no agent flag = auto-detect and install for every agent found)
 #   --api-key=KEY          same as ROGUE_API_KEY
 #   --actor-email=EMAIL    same as ROGUE_ACTOR_EMAIL
@@ -107,12 +108,15 @@ have_cmd() { command -v "$1" >/dev/null 2>&1; }
 #   claude    Claude Code    command:claude        install_claude   ← implemented
 #   codex     Codex CLI      command:codex         install_codex    ← implemented
 #   cursor    Cursor         command:cursor|~/.cursor  install_cursor ← implemented
-#   gemini    Gemini CLI     command:gemini        install_gemini   (not yet)
+#   gemini    Gemini CLI     command:gemini        install_gemini   ← implemented
 #
 # Claude and Codex install via their native plugin CLIs (which git-clone the
 # marketplace). Cursor has NO plugin CLI — install is a file copy into
 # ~/.cursor/plugins/local/rogue. So install_cursor downloads the release tarball
-# and copies the plugin tree (see cursor_install_plugin).
+# and copies the plugin tree (see cursor_install_plugin). Gemini HAS a native
+# extension CLI but expects the manifest at a source root — so gemini_install_extension
+# downloads the release tarball (whose top dir IS the extension) and runs
+# `gemini extensions install <dir>` (see gemini_install_extension).
 
 # ── Marketplace + plugin install (Claude) ─────────────────────────────────────
 claude_install_plugin() {
@@ -215,6 +219,52 @@ cursor_install_plugin() {
   mkdir -p "$CURSOR_INSTALL_DIR"
   cp -R "$src/." "$CURSOR_INSTALL_DIR/"
   ok "Plugin installed → ${C_DIM}$CURSOR_INSTALL_DIR${C_RESET}"
+}
+
+# ── Native-extension install (Gemini CLI) ─────────────────────────────────────
+# Gemini has a native extension CLI, but `gemini extensions install <github-url>`
+# expects gemini-extension.json at the SOURCE ROOT — which the monorepo root is
+# not. So we download the release tarball (whose top dir IS the extension, with
+# the manifest at its root — see scripts/build-release.sh), extract it, and run
+# `gemini extensions install <extracted-dir>`. Gemini makes its own managed copy
+# under ~/.gemini/extensions/rogue, so the temp dir is disposable. Re-running
+# upgrades (uninstall-then-install). Returns non-zero (never `die`s) so a missing
+# asset can't abort a run that already installed the other agents.
+gemini_install_extension() {
+  local tmp asset url src
+  asset="rogue-plugin-gemini.tar.gz"
+  if [ -n "${ROGUE_PLUGIN_VERSION:-}" ]; then
+    url="https://github.com/${ROGUE_PLUGIN_REPO}/releases/download/${ROGUE_PLUGIN_VERSION}/${asset}"
+  else
+    url="https://github.com/${ROGUE_PLUGIN_REPO}/releases/latest/download/${asset}"
+  fi
+
+  tmp="$(mktemp -d)" || { warn "Could not create a temp dir for the Gemini download."; return 1; }
+  # shellcheck disable=SC2064
+  trap "rm -rf '$tmp'" RETURN
+
+  note "Downloading extension ${C_DIM}${asset}${C_RESET}"
+  if ! curl -fsSL --max-time 60 -o "$tmp/p.tar.gz" "$url"; then
+    warn "Gemini extension asset not available yet ($url) — skipping Gemini. Re-run the installer once it's published."
+    return 1
+  fi
+  mkdir -p "$tmp/extract"
+  tar -xzf "$tmp/p.tar.gz" -C "$tmp/extract" \
+    || { warn "Could not extract the Gemini extension tarball — skipping Gemini."; return 1; }
+
+  # The tarball stages a top dir (rogue-plugin-gemini/) whose ROOT is the extension.
+  src="$(find "$tmp/extract" -type f -name gemini-extension.json | head -1)"
+  [ -n "$src" ] || { warn "Gemini manifest missing in download — skipping Gemini."; return 1; }
+  src="$(dirname "$src")"
+
+  # Reinstall cleanly so a re-run upgrades. Ignore uninstall errors (first run).
+  gemini extensions uninstall rogue >/dev/null 2>&1 || true
+  if gemini extensions install "$src" --consent >/dev/null 2>&1; then
+    ok "Extension installed via ${C_DIM}gemini extensions install${C_RESET}"
+  else
+    warn "gemini extensions install failed. Run 'gemini extensions install $src' to see the error."
+    return 1
+  fi
 }
 
 # ── Credentials ───────────────────────────────────────────────────────────────
@@ -465,6 +515,15 @@ install_cursor() {
   fi
 }
 
+install_gemini() {
+  printf '\n%sRogue Security%s — Gemini CLI\n' "$C_TEAL" "$C_RESET" >&2
+  # Non-fatal: a failed Gemini install must not abort the run (see gemini_install_extension).
+  if gemini_install_extension; then
+    note "Gemini skips untrusted hooks — open ${C_DIM}/hooks${C_RESET} in Gemini CLI and trust the Rogue entries once."
+    note "Then restart Gemini CLI and run ${C_DIM}/setup${C_RESET} (if needed) and ${C_DIM}/status${C_RESET} to verify."
+  fi
+}
+
 # ── CLI flags ─────────────────────────────────────────────────────────────────
 # Accepts `--flag=value` and `--flag value`. Sets the same globals the env knobs
 # do, so the rest of the script is flag-agnostic. CLI flags override env vars.
@@ -485,6 +544,7 @@ parse_args() {
       --claude)          WANT="$WANT claude" ;;
       --codex)           WANT="$WANT codex" ;;
       --cursor)          WANT="$WANT cursor" ;;
+      --gemini)          WANT="$WANT gemini" ;;
       --non-interactive) NON_INTERACTIVE=1 ;;
       --no-statusline)   ROGUE_NO_STATUSLINE=1 ;;
       -h|--help)         usage; exit 0 ;;
@@ -508,6 +568,7 @@ main() {
         claude) have_cmd claude || die "--claude requested but the 'claude' CLI is not on PATH. Install Claude Code (https://claude.com/code) first." ;;
         codex)  have_cmd codex  || die "--codex requested but the 'codex' CLI is not on PATH. Install OpenAI Codex first." ;;
         cursor) : ;;
+        gemini) have_cmd gemini || die "--gemini requested but the 'gemini' CLI is not on PATH. Install Gemini CLI (https://geminicli.com) first." ;;
       esac
     done
   else
@@ -517,7 +578,8 @@ main() {
     have_cmd claude && agents="$agents claude"
     have_cmd codex  && agents="$agents codex"
     { have_cmd cursor || [ -d "$HOME/.cursor" ]; } && agents="$agents cursor"
-    [ -n "$agents" ] || die "No supported coding agent found (looked for: claude, codex, cursor). Install Claude Code (https://claude.com/code), OpenAI Codex, or Cursor (https://cursor.com) first."
+    have_cmd gemini && agents="$agents gemini"
+    [ -n "$agents" ] || die "No supported coding agent found (looked for: claude, codex, cursor, gemini). Install Claude Code (https://claude.com/code), OpenAI Codex, Cursor (https://cursor.com), or Gemini CLI (https://geminicli.com) first."
   fi
 
   # Credentials once — every plugin reads the shared ~/.rogue-env.
@@ -528,6 +590,7 @@ main() {
       claude) install_claude ;;
       codex)  install_codex ;;
       cursor) install_cursor ;;
+      gemini) install_gemini ;;
     esac
   done
 

@@ -1,0 +1,41 @@
+description = "Set up Rogue Security AIDR for Gemini CLI — configure API key, detect identity, and verify connection"
+
+prompt = """
+You are helping the user set up the Rogue Security AIDR integration for Gemini CLI. Work through these steps in order, using the `run_shell_command` tool. Pick the command variant for the user's OS: use the macOS / Linux (bash) form by default, and the Windows (PowerShell) form on native Windows.
+
+The extension is installed at `~/.gemini/extensions/rogue` (`%USERPROFILE%\\.gemini\\extensions\\rogue` on Windows). Its credential helper is `scripts/setup.mjs` there.
+
+## Step 1: Check existing configuration
+- macOS / Linux: `test -f ~/.rogue-env && echo exists || echo "not found"`
+- Windows: `if (Test-Path "$env:USERPROFILE\\.rogue-env") { 'exists' } else { 'not found' }`
+
+If it already exists, tell the user and ask whether to reconfigure. Note that the credential file is SHARED with the Rogue plugins for Claude Code, Codex, and Cursor — reconfiguring here updates it for all of them.
+
+## Step 2: Get the API key
+Ask the user for their Rogue Security API key. It should start with `rsk_`. If they don't have one, direct them to https://app.rogue.security/settings/api-keys
+
+## Step 3: Validate the API key
+Replace <KEY> with the key they gave:
+- macOS / Linux: `curl -s -o /dev/null -w "%{http_code}" -H "x-rogue-api-key: <KEY>" https://api.rogue.security/api/v1/hooks/ping`
+- Windows: `try { (Invoke-WebRequest -Uri https://api.rogue.security/api/v1/hooks/ping -Headers @{ 'x-rogue-api-key' = '<KEY>' } -UseBasicParsing -TimeoutSec 10).StatusCode } catch { $_.Exception.Response.StatusCode.value__ }`
+
+If the response is not 200, tell the user the key is invalid and ask them to try again.
+
+## Step 4: Detect identity
+Run `git config user.email` and `git config user.name`. Show what was detected and confirm with the user. If empty, ask them directly.
+
+## Step 5: Store credentials
+Run the setup helper with the key, email, and name:
+- macOS / Linux: `node ~/.gemini/extensions/rogue/scripts/setup.mjs "<API_KEY>" "<EMAIL>" "<NAME>"`
+- Windows: `node "$env:USERPROFILE\\.gemini\\extensions\\rogue\\scripts\\setup.mjs" "<API_KEY>" "<EMAIL>" "<NAME>"`
+
+This writes `~/.rogue-env` (mode 600). Hooks read it directly from disk each invocation — no shell profile changes needed.
+
+## Step 6: Final instructions
+Tell the user:
+1. Credentials are stored in `~/.rogue-env` (mode 600), shared with the Claude Code / Codex / Cursor Rogue plugins.
+2. **Trust the hooks once.** Gemini CLI skips new/changed command hooks until they're reviewed — open `/hooks` in Gemini CLI and trust the Rogue entries.
+3. **Restart Gemini CLI.** Hooks load at session start, so quit and reopen any running session.
+4. Run `/status` to verify the connection.
+5. The AIDR dashboard is at https://app.rogue.security/aidr
+"""
