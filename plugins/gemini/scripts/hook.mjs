@@ -25,6 +25,11 @@ import { execFileSync, spawn } from "node:child_process";
 
 const EVENT = process.argv[2] || "unknown";
 
+// Surface label stamped on every log line. The hook log (~/.rogue/hook.log) is
+// SHARED with the Claude/Codex/Cursor plugins, so this token is what lets you
+// tell whose events a line belongs to when reading the merged file.
+const PROVIDER = "gemini_cli";
+
 // Extension root: .../<ext>/scripts/hook.mjs → <ext>
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const EXT_ROOT = path.dirname(SCRIPT_DIR);
@@ -50,7 +55,7 @@ function log(msg) {
   try {
     fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
     const ts = new Date().toISOString().replace(/\.\d+Z$/, "Z");
-    fs.appendFileSync(LOG_FILE, `${ts} event=${EVENT} ${msg}\n`);
+    fs.appendFileSync(LOG_FILE, `${ts} provider=${PROVIDER} event=${EVENT} ${msg}\n`);
   } catch {
     /* logging is best-effort */
   }
