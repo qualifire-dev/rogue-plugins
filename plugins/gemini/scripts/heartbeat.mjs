@@ -13,62 +13,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { execFileSync } from "node:child_process";
-
-const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
-const EXT_ROOT = path.dirname(SCRIPT_DIR);
-const HOME = os.homedir() || process.env.HOME || process.env.USERPROFILE || ".";
-const IS_WIN = process.platform === "win32";
-
-function shellUnquote(raw) {
-  const v = raw.trim();
-  if (v.length >= 2 && v[0] === "'" && v[v.length - 1] === "'") {
-    return v.slice(1, -1).replace(/'\\''/g, "'");
-  }
-  if (v.length >= 2 && v[0] === '"' && v[v.length - 1] === '"') {
-    return v.slice(1, -1).replace(/\\(["\\$`])/g, "$1");
-  }
-  return v;
-}
-
-function loadEnvFiles() {
-  const merged = {};
-  const files = [
-    path.join(EXT_ROOT, "env"),
-    IS_WIN ? "C:\\ProgramData\\rogue\\env" : "/etc/rogue/env",
-    path.join(HOME, ".rogue-env"),
-  ];
-  for (const f of files) {
-    let text;
-    try {
-      text = fs.readFileSync(f, "utf8");
-    } catch {
-      continue;
-    }
-    for (const line of text.split(/\r?\n/)) {
-      const m = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
-      if (m) merged[m[1]] = shellUnquote(m[2]);
-    }
-  }
-  for (const k of Object.keys(process.env)) {
-    if (k.startsWith("ROGUE_") && process.env[k]) merged[k] = process.env[k];
-  }
-  return merged;
-}
-
-function gitConfig(key) {
-  try {
-    return execFileSync("git", ["config", "--global", key], {
-      timeout: 2000,
-      stdio: ["ignore", "pipe", "ignore"],
-    })
-      .toString()
-      .trim();
-  } catch {
-    return "";
-  }
-}
+import { EXT_ROOT, loadEnvFiles, gitConfig } from "./shared.mjs";
 
 // Read the extension version from the manifest (source of truth).
 function readVersion() {

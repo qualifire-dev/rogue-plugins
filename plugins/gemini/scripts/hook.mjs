@@ -20,8 +20,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
+import { HOME, SCRIPT_DIR, loadEnvFiles, gitConfig } from "./shared.mjs";
 
 const EVENT = process.argv[2] || "unknown";
 
@@ -29,13 +29,6 @@ const EVENT = process.argv[2] || "unknown";
 // SHARED with the Claude/Codex/Cursor plugins, so this token is what lets you
 // tell whose events a line belongs to when reading the merged file.
 const PROVIDER = "gemini_cli";
-
-// Extension root: .../<ext>/scripts/hook.mjs → <ext>
-const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
-const EXT_ROOT = path.dirname(SCRIPT_DIR);
-
-const HOME = os.homedir() || process.env.HOME || process.env.USERPROFILE || ".";
-const IS_WIN = process.platform === "win32";
 
 // ── Emit + exit ────────────────────────────────────────────────────────────
 // stdout must be ONLY the final JSON object. Always exit 0 — a blocking verdict
@@ -58,65 +51,6 @@ function log(msg) {
     fs.appendFileSync(LOG_FILE, `${ts} provider=${PROVIDER} event=${EVENT} ${msg}\n`);
   } catch {
     /* logging is best-effort */
-  }
-}
-
-// ── Shell-quoted value decode (round-trips the `export KEY=value` form the other
-// plugins write with printf %q / single-quoting). ────────────────────────────
-function shellUnquote(raw) {
-  let v = raw.trim();
-  // strip a trailing inline comment only when unquoted (kept simple: we only
-  // write clean single lines, so this is defensive).
-  if (v.length >= 2 && v[0] === "'" && v[v.length - 1] === "'") {
-    // POSIX single-quote: '...' with '\'' representing a literal quote.
-    return v.slice(1, -1).replace(/'\\''/g, "'");
-  }
-  if (v.length >= 2 && v[0] === '"' && v[v.length - 1] === '"') {
-    return v.slice(1, -1).replace(/\\(["\\$`])/g, "$1");
-  }
-  return v;
-}
-
-// ── Credential resolution ────────────────────────────────────────────────────
-// Same env-file precedence as the other monorepo plugins (later wins; process
-// env wins over all files):
-//   <ext>/env (bundled) → /etc/rogue/env (MDM) → ~/.rogue-env (per-user)
-function loadEnvFiles() {
-  const merged = {};
-  const files = [
-    path.join(EXT_ROOT, "env"),
-    IS_WIN ? "C:\\ProgramData\\rogue\\env" : "/etc/rogue/env",
-    path.join(HOME, ".rogue-env"),
-  ];
-  for (const f of files) {
-    let text;
-    try {
-      text = fs.readFileSync(f, "utf8");
-    } catch {
-      continue;
-    }
-    for (const line of text.split(/\r?\n/)) {
-      const m = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
-      if (m) merged[m[1]] = shellUnquote(m[2]);
-    }
-  }
-  // Process env wins (explicitly-set ROGUE_* / config knobs).
-  for (const k of Object.keys(process.env)) {
-    if (k.startsWith("ROGUE_") && process.env[k]) merged[k] = process.env[k];
-  }
-  return merged;
-}
-
-function gitConfig(key) {
-  try {
-    return execFileSync("git", ["config", "--global", key], {
-      timeout: 2000,
-      stdio: ["ignore", "pipe", "ignore"],
-    })
-      .toString()
-      .trim();
-  } catch {
-    return "";
   }
 }
 
