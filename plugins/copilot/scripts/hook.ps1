@@ -150,6 +150,52 @@ try {
 } catch {}
 $payload = $payload.TrimStart([char]0xFEFF)
 
+# The agentStop/subagentStop hook can fire before Copilot has flushed the turn's
+# final assistant.message line to events.jsonl (observed ~5-50ms lag), so a naive
+# tail captures a stale transcript missing the very reply we need to evaluate —
+# the reply is silently dropped. File appends are ordered, so once the turn's
+# closing "assistant.turn_end" line is on disk, every earlier line of the turn
+# (incl. the final assistant.message) is too. Poll (bounded) until the last
+# non-hook line is an assistant.turn_end. Mirrors hook.sh's wait_for_transcript_flush.
+function Wait-TranscriptFlush {
+    param([string]$Path)
+    # ~5s cap (50 * 100ms). Covers disk FLUSH lag after the completed
+    # assistant.message is written — NOT streaming time (agentStop fires only
+    # after the turn completes). ROGUE_FLUSH_WAIT_ITERS overrides the count
+    # (tests set it low to exercise the fail-open path). Mirrors hook.sh.
+    $max = 50
+    if ($env:ROGUE_FLUSH_WAIT_ITERS) { try { $max = [int]$env:ROGUE_FLUSH_WAIT_ITERS } catch {} }
+    for ($i = 0; $i -lt $max; $i++) {   # happy path returns in 0-1 iters
+        try {
+            $last = $null
+            $fs = [System.IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite')
+            try {
+                $len = $fs.Length
+                $take = [Math]::Min(262144, $len)
+                if ($take -gt 0) {
+                    [void]$fs.Seek($len - $take, 'Begin')
+                    $buf = New-Object byte[] $take
+                    $read = 0
+                    while ($read -lt $take) {
+                        $n = $fs.Read($buf, $read, $take - $read)
+                        if ($n -le 0) { break }
+                        $read += $n
+                    }
+                    $txt = [System.Text.Encoding]::UTF8.GetString($buf, 0, $read)
+                    foreach ($ln in ($txt -split "`n")) {
+                        $t = $ln.Trim()
+                        if (-not $t) { continue }
+                        if ($t -like '*"hook.*') { continue }
+                        $last = $t
+                    }
+                }
+            } finally { $fs.Close() }
+            if ($last -and $last -like '*"assistant.turn_end"*') { return }
+        } catch { return }
+        Start-Sleep -Milliseconds 100
+    }
+}
+
 # agentStop / subagentStop carry no message content inline — only a
 # transcriptPath. Append the last ~256KB of that events.jsonl file, base64-
 # encoded, as "transcriptTailB64" so the backend can extract the final message.
@@ -161,6 +207,7 @@ if ($EventName -eq 'agentStop' -or $EventName -eq 'subagentStop') {
         if ($m.Success) {
             $tp = $m.Groups[1].Value
             if ($tp -and (Test-Path -LiteralPath $tp)) {
+                Wait-TranscriptFlush $tp
                 $fs = [System.IO.File]::Open($tp, 'Open', 'Read', 'ReadWrite')
                 try {
                     $len = $fs.Length

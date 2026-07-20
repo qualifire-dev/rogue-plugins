@@ -52,11 +52,44 @@ sanitize() { printf '%s' "$1" | tr -d '\000-\037\177'; }
 # characters, so appending it by re-closing the object is safe. Fail-open: any
 # problem (no path, unreadable, empty) returns the body unchanged.
 # $1 = original JSON body; echoes the (possibly augmented) body.
+# The agentStop/subagentStop hook fires as soon as Copilot decides the turn
+# ended, which can be BEFORE it has flushed the turn's final assistant.message
+# line to events.jsonl (observed ~5-50ms lag). A naive tail then captures a
+# stale transcript missing the very reply we need to evaluate — the reply is
+# silently dropped. File appends are ordered, so once the turn's closing
+# "assistant.turn_end" line is on disk, every earlier line of the turn (incl.
+# the final assistant.message) is too. Poll (bounded) until the last non-hook
+# line is an assistant.turn_end. Our own agentStop hook.start/hook.end lines are
+# excluded so they can't be mistaken for the turn boundary. Fail-open: on
+# timeout we proceed with whatever is on disk.
+# $1 = transcript path.
+wait_for_transcript_flush() {
+  _wtp="$1"
+  _n=0
+  # ~5s cap (50 * 0.1s), well inside the 30s hook budget. This covers the disk
+  # FLUSH lag between Copilot writing the completed assistant.message line and
+  # our read (~5-64ms observed) — NOT streaming time: agentStop fires only after
+  # the turn completes, so the message is already written when we poll. The gap
+  # is generous purely for slow/loaded disks. ROGUE_FLUSH_WAIT_ITERS overrides
+  # the count (tests set it low to exercise the fail-open path).
+  _max=${ROGUE_FLUSH_WAIT_ITERS:-50}
+  while [ "$_n" -lt "$_max" ]; do   # the happy path returns in 0-1 iters
+    _last=$(tail -c 262144 "$_wtp" 2>/dev/null | grep -v '"hook\.' | grep -v '^[[:space:]]*$' | tail -1)
+    case "$_last" in
+      *'"assistant.turn_end"'*) return 0 ;;
+    esac
+    sleep 0.1
+    _n=$((_n + 1))
+  done
+  return 0
+}
+
 augment_with_transcript() {
   _body="$1"
   _tp=$(printf '%s' "$_body" | sed -n 's/.*"transcriptPath":"\([^"]*\)".*/\1/p')
   [ -n "$_tp" ] || { printf '%s' "$_body"; return; }
   [ -r "$_tp" ] || { printf '%s' "$_body"; return; }
+  wait_for_transcript_flush "$_tp"
   _b64=$(tail -c 262144 "$_tp" 2>/dev/null | base64 2>/dev/null | tr -d '\r\n')
   [ -n "$_b64" ] || { printf '%s' "$_body"; return; }
   printf '%s,"transcriptTailB64":"%s"}' "${_body%\}}" "$_b64"

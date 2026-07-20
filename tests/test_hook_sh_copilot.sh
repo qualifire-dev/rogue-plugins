@@ -43,6 +43,7 @@ run_dispatcher() {
   HOME="$tmp_home" \
     ROGUE_API_KEY='' ROGUE_ACTOR_EMAIL='' ROGUE_ACTOR_NAME='' ROGUE_BASE_URL='' \
     ROGUE_LOG_FILE="$tmp_home/hook.log" \
+    ROGUE_FLUSH_WAIT_ITERS="${ROGUE_FLUSH_WAIT_ITERS:-}" \
     "$SH" "$HOOK" "$1" <<< "$2" > "$OUT_FILE"
   rc=$?
   set -e
@@ -146,6 +147,7 @@ TDIR="$(mktemp -d)"
 printf '%s\n' \
   '{"type":"user.message","timestamp":"2026-07-20T09:00:00.000Z","data":{"content":"hi","interactionId":"main-1"}}' \
   '{"type":"assistant.message","timestamp":"2026-07-20T09:00:02.000Z","data":{"content":"MAIN final","interactionId":"main-1"}}' \
+  '{"type":"assistant.turn_end","timestamp":"2026-07-20T09:00:02.100Z"}' \
   > "$TDIR/events.jsonl"
 restart_mock '{}'
 AGENTSTOP_PAYLOAD=$(printf '{"sessionId":"u1","timestamp":1784538002000,"stopReason":"end_turn","transcriptPath":"%s"}' "$TDIR/events.jsonl")
@@ -189,6 +191,7 @@ assert_eq "$body" '{"source":"new"}' "sessionStart configured POSTs the payload 
 TDIR="$(mktemp -d)"
 printf '%s\n' '{"type":"assistant.message","timestamp":"2026-07-20T09:00:02.000Z","data":{"content":"NESTED ok","interactionId":"main-1"}}' > "$TDIR/events.jsonl"
 printf '%s\n' '{"type":"user.message","timestamp":"2026-07-20T09:00:00.000Z","data":{"content":"hi","interactionId":"main-1"}}' >> "$TDIR/events.jsonl"
+printf '%s\n' '{"type":"assistant.turn_end","timestamp":"2026-07-20T09:00:02.100Z"}' >> "$TDIR/events.jsonl"
 restart_mock '{}'
 NESTED_PAYLOAD=$(printf '{"sessionId":"u1","timestamp":1784538002000,"transcriptPath":"%s","meta":{"k":"v"}}' "$TDIR/events.jsonl")
 set +e; run_dispatcher agentStop "$NESTED_PAYLOAD"; LAST_RC=$?; set -e
@@ -196,6 +199,50 @@ assert_eq "$LAST_RC" "0" "agentStop with nested-object body exits 0"
 body=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["body"])' "$HEADERS_FILE")
 valid=$(printf '%s' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("meta",{}).get("k")=="v" and "transcriptTailB64" in d)')
 assert_eq "$valid" "True" "nested-object body stays valid JSON (meta preserved, tail added)"
+
+# ── Case 12: flush-wait ignores our own hook.* lines to find the turn boundary ─
+# agentStop hook.start/hook.end can already be in the transcript; the wait must
+# skip them and still see assistant.turn_end as the last real line (return fast).
+TDIR="$(mktemp -d)"
+printf '%s\n' \
+  '{"type":"user.message","timestamp":"2026-07-20T09:00:00.000Z","data":{"content":"hi","interactionId":"main-1"}}' \
+  '{"type":"assistant.message","timestamp":"2026-07-20T09:00:02.000Z","data":{"content":"FLUSHED reply","interactionId":"main-1"}}' \
+  '{"type":"assistant.turn_end","timestamp":"2026-07-20T09:00:02.100Z"}' \
+  '{"type":"hook.start","timestamp":"2026-07-20T09:00:02.200Z"}' \
+  > "$TDIR/events.jsonl"
+restart_mock '{}'
+START=$(date +%s)
+set +e; run_dispatcher agentStop "$(printf '{"sessionId":"u1","timestamp":1784538002000,"stopReason":"end_turn","transcriptPath":"%s"}' "$TDIR/events.jsonl")"; LAST_RC=$?; set -e
+ELAPSED=$(( $(date +%s) - START ))
+assert_eq "$LAST_RC" "0" "agentStop with trailing hook.* lines exits 0"
+body=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["body"])' "$HEADERS_FILE")
+b64=$(printf '%s' "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("transcriptTailB64",""))')
+decoded=$(python3 -c 'import base64,sys; print(base64.b64decode(sys.argv[1]).decode("utf-8","replace"))' "$b64")
+case "$decoded" in
+  *'FLUSHED reply'*) echo "  ok: turn_end detected past trailing hook lines; tail sent" ;;
+  *) echo "FAIL [Case 12 tail]: <$decoded>" >&2; exit 1 ;;
+esac
+if [ "$ELAPSED" -le 2 ]; then echo "  ok: returned promptly (${ELAPSED}s) — no needless wait when flushed"; else echo "FAIL [Case 12]: waited ${ELAPSED}s despite turn_end present" >&2; exit 1; fi
+rm -rf "$TDIR"
+
+# ── Case 13: unflushed transcript (no turn_end) → bounded wait, then fail-open ─
+# Last real line is a turn_start (final assistant.message not yet flushed). The
+# dispatcher must NOT hang: it waits the bounded number of iterations then posts
+# best-effort (exit 0). ROGUE_FLUSH_WAIT_ITERS keeps the test fast.
+TDIR="$(mktemp -d)"
+printf '%s\n' \
+  '{"type":"user.message","timestamp":"2026-07-20T09:00:00.000Z","data":{"content":"hi","interactionId":"main-1"}}' \
+  '{"type":"assistant.turn_start","timestamp":"2026-07-20T09:00:01.000Z","data":{"interactionId":"main-1"}}' \
+  > "$TDIR/events.jsonl"
+restart_mock '{}'
+export ROGUE_FLUSH_WAIT_ITERS=2
+START=$(date +%s)
+set +e; run_dispatcher agentStop "$(printf '{"sessionId":"u1","timestamp":1784538002000,"stopReason":"end_turn","transcriptPath":"%s"}' "$TDIR/events.jsonl")"; LAST_RC=$?; set -e
+ELAPSED=$(( $(date +%s) - START ))
+unset ROGUE_FLUSH_WAIT_ITERS
+assert_eq "$LAST_RC" "0" "unflushed agentStop fails open (exit 0)"
+if [ "$ELAPSED" -le 3 ]; then echo "  ok: bounded wait honored (${ELAPSED}s), did not hang"; else echo "FAIL [Case 13]: waited ${ELAPSED}s (unbounded?)" >&2; exit 1; fi
+rm -rf "$TDIR"
 rm -rf "$TDIR"
 
 echo
