@@ -20,12 +20,25 @@ if doc.get("version") != 1:
     errors.append(f"top-level version must be 1, got {doc.get('version')!r}")
 
 hooks = doc.get("hooks", {})
-expected_events = {"sessionStart", "userPromptSubmitted", "preToolUse", "postToolUse"}
+expected_events = {
+    "sessionStart", "sessionEnd", "userPromptSubmitted", "userPromptTransformed",
+    "preToolUse", "postToolUse", "postToolUseFailure", "permissionRequest",
+    "agentStop", "subagentStart", "subagentStop", "preCompact",
+    "errorOccurred", "notification",
+}
 got_events = set(hooks.keys())
 if got_events != expected_events:
     errors.append(f"events {sorted(got_events)} != expected {sorted(expected_events)}")
 
-matcher_required = {"preToolUse", "postToolUse"}
+# `Stop` is Copilot's PascalCase alias for turn-end; it fires alongside
+# `agentStop`, so registering both would double-POST. Only `agentStop` is allowed.
+if "Stop" in hooks:
+    errors.append("event 'Stop' must not be registered (agentStop already fires for turn-end)")
+
+matcher_required = {
+    "preToolUse", "postToolUse", "postToolUseFailure", "permissionRequest",
+    "subagentStart", "subagentStop", "preCompact", "notification",
+}
 
 for event, entries in hooks.items():
     if not isinstance(entries, list) or not entries:
@@ -63,12 +76,16 @@ for event in matcher_required:
         if entry.get("matcher") != ".*":
             errors.append(f"{event}[{i}]: matcher must be '.*'")
 
-# The eval events must invoke hook.sh/hook.ps1 with the matching event name arg.
-for event in ("userPromptSubmitted", "preToolUse", "postToolUse"):
-    for i, entry in enumerate(hooks.get(event, [])):
-        if event not in entry.get("bash", ""):
+# Every hook.sh/hook.ps1 entry must pass its own event name as the argument.
+# (sessionStart also has a heartbeat.sh entry that carries no event arg — skip
+# entries that don't invoke hook.sh/hook.ps1.)
+for event, entries in hooks.items():
+    for i, entry in enumerate(entries):
+        bash = entry.get("bash", "")
+        ps = entry.get("powershell", "")
+        if "hook.sh" in bash and event not in bash:
             errors.append(f"{event}[{i}].bash: must pass '{event}' to hook.sh")
-        if event not in entry.get("powershell", ""):
+        if "hook.ps1" in ps and event not in ps:
             errors.append(f"{event}[{i}].powershell: must pass '{event}' to hook.ps1")
 
 if errors:
@@ -78,9 +95,10 @@ if errors:
     sys.exit(1)
 
 print("  ok: version == 1")
-print("  ok: events == {sessionStart, userPromptSubmitted, preToolUse, postToolUse}")
+print("  ok: all 14 Copilot events registered (Stop not among them)")
 print("  ok: every command has bash + powershell keys ending '; exit 0' with ${PLUGIN_ROOT}")
-print("  ok: preToolUse/postToolUse carry matcher '.*'")
+print("  ok: tool/lifecycle events carry matcher '.*'")
+print("  ok: every hook.sh/hook.ps1 entry passes its event name")
 print("  ok: timeoutSec is a positive int on every entry")
 print()
 print("All copilot hooks.json lint checks passed.")

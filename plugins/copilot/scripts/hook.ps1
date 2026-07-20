@@ -108,20 +108,19 @@ foreach ($k in 'ROGUE_API_KEY','ROGUE_ACTOR_EMAIL','ROGUE_ACTOR_NAME','ROGUE_BAS
 
 $apiKey = $creds['ROGUE_API_KEY']
 
-# SessionStart is observe-only: never POSTed. The heartbeat runs from a separate
-# hooks.json entry; here we only surface the "not configured" hint.
-if ($EventName -eq 'sessionStart') {
-    if (-not $apiKey) {
-        Log 'outcome=unconfigured'
+# Not configured: emit the SessionStart hint (so the user knows to run setup) or
+# a clean allow for every other event. Never POST without a key. When a key IS
+# present, sessionStart falls through to the POST path below (audit/persistence);
+# the heartbeat runs from a separate hooks.json entry.
+if (-not $apiKey) {
+    Log 'outcome=unconfigured'
+    if ($EventName -eq 'sessionStart') {
         Write-Raw '{"additionalContext":"[Rogue Security] Not configured. Run /rogue:setup to connect your API key."}'
     } else {
-        Log 'outcome=session'
         Write-Raw '{}'
     }
     exit 0
 }
-
-if (-not $apiKey) { Log 'outcome=unconfigured'; Write-Raw '{}'; exit 0 }
 
 # URL: explicit ROGUE_API_URL wins, else base + path.
 $url = $creds['ROGUE_API_URL']
@@ -150,6 +149,49 @@ try {
     $payload = [System.Text.Encoding]::UTF8.GetString($raw)
 } catch {}
 $payload = $payload.TrimStart([char]0xFEFF)
+
+# agentStop / subagentStop carry no message content inline — only a
+# transcriptPath. Append the last ~256KB of that events.jsonl file, base64-
+# encoded, as "transcriptTailB64" so the backend can extract the final message.
+# base64 has no JSON-special chars, so re-closing the object is safe. Fail-open:
+# any problem returns the payload unchanged.
+if ($EventName -eq 'agentStop' -or $EventName -eq 'subagentStop') {
+    try {
+        $m = [regex]::Match($payload, '"transcriptPath":"([^"]*)"')
+        if ($m.Success) {
+            $tp = $m.Groups[1].Value
+            if ($tp -and (Test-Path -LiteralPath $tp)) {
+                $fs = [System.IO.File]::Open($tp, 'Open', 'Read', 'ReadWrite')
+                try {
+                    $len = $fs.Length
+                    $take = [Math]::Min(262144, $len)
+                    if ($take -gt 0) {
+                        [void]$fs.Seek($len - $take, 'Begin')
+                        $buf = New-Object byte[] $take
+                        # Stream.Read may return fewer bytes than requested — loop
+                        # until $take bytes are read (or EOF) so no trailing NULs
+                        # leak into the base64.
+                        $read = 0
+                        while ($read -lt $take) {
+                            $n = $fs.Read($buf, $read, $take - $read)
+                            if ($n -le 0) { break }
+                            $read += $n
+                        }
+                        if ($read -gt 0) {
+                            $b64 = [Convert]::ToBase64String($buf, 0, $read)
+                            # Strip exactly ONE trailing '}' (mirrors hook.sh's
+                            # "${_body%\}}"). String.TrimEnd('}') would strip ALL
+                            # trailing braces and corrupt a body ending in "}}".
+                            $p = $payload.TrimEnd()
+                            if ($p.EndsWith('}')) { $p = $p.Substring(0, $p.Length - 1) }
+                            if ($b64) { $payload = $p + ',"transcriptTailB64":"' + $b64 + '"}' }
+                        }
+                    }
+                } finally { $fs.Close() }
+            }
+        }
+    } catch { Dbg "transcript augment failed: $($_.Exception.Message)" }
+}
 
 # ── POST (fail-open) → relay verbatim ──────────────────────────────────────
 $headers = @{

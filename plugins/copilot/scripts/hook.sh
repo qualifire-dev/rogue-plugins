@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Rogue Security hook bridge for GitHub Copilot CLI — bash implementation.
-# Usage: hook.sh <eventName>   (preToolUse | postToolUse | userPromptSubmitted | sessionStart)
+# Usage: hook.sh <eventName>   (any of Copilot's 14 hook events)
 #
 # Reads one Copilot hook event JSON on stdin, POSTs it to the rogue-api
 # /hooks/copilot route, and relays the native Copilot decision verbatim on
 # stdout. PURE RELAY: no block-detection regex, no local modal — Copilot renders
-# the native deny shape ({"permissionDecision":"deny",...}) itself.
+# the native deny shape ({"permissionDecision":"deny",...}) itself. The only
+# stdin enrichment is agentStop/subagentStop, which append the transcript tail
+# (see augment_with_transcript) so the backend can read the final message.
 #
 # Copilot selects the `bash` command on macOS/Linux and the `powershell` command
 # on Windows (see hooks.json), so — unlike the Claude bridge — there is no
@@ -43,22 +45,32 @@ log() {
 }
 sanitize() { printf '%s' "$1" | tr -d '\000-\037\177'; }
 
-# SessionStart is observe-only: never POSTed. The heartbeat is fired by a
-# separate hooks.json entry; here we only surface the "not configured" hint.
-if [ "$EVENT" = "sessionStart" ]; then
-  if [ -z "${ROGUE_API_KEY:-}" ]; then
-    log "outcome=unconfigured"
-    printf '{"additionalContext":"[Rogue Security] Not configured. Run /rogue:setup to connect your API key."}'
-  else
-    log "outcome=session"
-    echo '{}'
-  fi
-  exit 0
-fi
+# agentStop / subagentStop carry no message content inline — only a
+# transcriptPath pointing at the session's events.jsonl. Append the last ~256KB
+# of that file, base64-encoded, as "transcriptTailB64" so the backend can extract
+# the final assistant reply / subagent message. base64 output has no JSON-special
+# characters, so appending it by re-closing the object is safe. Fail-open: any
+# problem (no path, unreadable, empty) returns the body unchanged.
+# $1 = original JSON body; echoes the (possibly augmented) body.
+augment_with_transcript() {
+  _body="$1"
+  _tp=$(printf '%s' "$_body" | sed -n 's/.*"transcriptPath":"\([^"]*\)".*/\1/p')
+  [ -n "$_tp" ] || { printf '%s' "$_body"; return; }
+  [ -r "$_tp" ] || { printf '%s' "$_body"; return; }
+  _b64=$(tail -c 262144 "$_tp" 2>/dev/null | base64 2>/dev/null | tr -d '\r\n')
+  [ -n "$_b64" ] || { printf '%s' "$_body"; return; }
+  printf '%s,"transcriptTailB64":"%s"}' "${_body%\}}" "$_b64"
+}
 
+# Not configured: emit the SessionStart hint (so the user knows to run setup) or a
+# clean allow for every other event. Never POST without a key.
 if [ -z "${ROGUE_API_KEY:-}" ]; then
   log "outcome=unconfigured"
-  echo '{}'
+  if [ "$EVENT" = "sessionStart" ]; then
+    printf '{"additionalContext":"[Rogue Security] Not configured. Run /rogue:setup to connect your API key."}'
+  else
+    echo '{}'
+  fi
   exit 0
 fi
 
@@ -66,10 +78,16 @@ fi
 
 URL="${ROGUE_API_URL:-${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks/copilot}"
 
+# Buffer stdin so we can enrich it (agentStop/subagentStop) before POSTing.
+BODY="$(cat)"
+case "$EVENT" in
+  agentStop|subagentStop) BODY="$(augment_with_transcript "$BODY")" ;;
+esac
+
 # Capture body + HTTP status. -w appends a final line "<code>"; on any transport
 # failure curl exits non-zero and the code is 000. Relay the body ONLY on a clean
 # HTTP 200 so an error page (401/404/500) is never handed to Copilot as a decision.
-RAW=$(curl -sS -X POST "$URL" \
+RAW=$(printf '%s' "$BODY" | curl -sS -X POST "$URL" \
   -H "x-rogue-api-key: $ROGUE_API_KEY" \
   -H "x-rogue-event: $EVENT" \
   -H "x-rogue-actor-email: $ROGUE_ACTOR_EMAIL" \
@@ -89,6 +107,7 @@ if [ "$RC" -ne 0 ] || [ "$CODE" != "200" ] || [ -z "$BODY" ]; then
   exit 0
 fi
 
-# rogue-api already returns the correct native Copilot shape; relay it verbatim.
+# rogue-api already returns the correct native Copilot shape (allow "{}" for
+# audit-only events like sessionStart); relay it verbatim.
 printf '%s' "$BODY"
 exit 0

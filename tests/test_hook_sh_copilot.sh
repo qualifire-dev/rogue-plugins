@@ -141,5 +141,62 @@ case "$out" in
   *) echo "FAIL [sessionStart hint]: got <$out>" >&2; exit 1 ;;
 esac
 
+# ── Case 8: agentStop augments the POST body with the transcript tail ──────
+TDIR="$(mktemp -d)"
+printf '%s\n' \
+  '{"type":"user.message","timestamp":"2026-07-20T09:00:00.000Z","data":{"content":"hi","interactionId":"main-1"}}' \
+  '{"type":"assistant.message","timestamp":"2026-07-20T09:00:02.000Z","data":{"content":"MAIN final","interactionId":"main-1"}}' \
+  > "$TDIR/events.jsonl"
+restart_mock '{}'
+AGENTSTOP_PAYLOAD=$(printf '{"sessionId":"u1","timestamp":1784538002000,"stopReason":"end_turn","transcriptPath":"%s"}' "$TDIR/events.jsonl")
+set +e; run_dispatcher agentStop "$AGENTSTOP_PAYLOAD"; LAST_RC=$?; set -e
+assert_eq "$LAST_RC" "0" "agentStop exits 0"
+body=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["body"])' "$HEADERS_FILE")
+# augmented body must still be valid JSON and carry transcriptTailB64
+valid=$(printf '%s' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("transcriptTailB64" in d)')
+assert_eq "$valid" "True" "agentStop body is valid JSON with transcriptTailB64"
+b64=$(printf '%s' "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("transcriptTailB64",""))')
+decoded=$(python3 -c 'import base64,sys; print(base64.b64decode(sys.argv[1]).decode("utf-8","replace"))' "$b64")
+case "$decoded" in
+  *'MAIN final'*) echo "  ok: transcriptTailB64 decodes to the transcript" ;;
+  *) echo "FAIL [agentStop tail decode]: <$decoded>" >&2; exit 1 ;;
+esac
+rm -rf "$TDIR"
+
+# ── Case 9: agentStop with unreadable transcriptPath → body unchanged, exit 0
+restart_mock '{}'
+set +e; run_dispatcher agentStop '{"sessionId":"u1","timestamp":1,"stopReason":"end_turn","transcriptPath":"/no/such/file.jsonl"}'; LAST_RC=$?; set -e
+assert_eq "$LAST_RC" "0" "agentStop with missing transcript exits 0"
+body=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["body"])' "$HEADERS_FILE")
+case "$body" in
+  *transcriptTailB64*) echo "FAIL [agentStop missing tail]: should not add tail; body=<$body>" >&2; exit 1 ;;
+  *) echo "  ok: agentStop with missing transcript posts the body unchanged" ;;
+esac
+
+# ── Case 10: sessionStart configured → POSTs for audit and relays {} ────────
+restart_mock '{}'
+set +e; run_dispatcher sessionStart '{"source":"new"}'; LAST_RC=$?; set -e
+out=$(cat "$OUT_FILE")
+assert_eq "$out" "{}" "sessionStart configured relays {}"
+assert_eq "$LAST_RC" "0" "sessionStart configured exits 0"
+event=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["headers"].get("x-rogue-event",""))' "$HEADERS_FILE")
+assert_eq "$event" "sessionStart" "sessionStart configured POSTs with x-rogue-event=sessionStart"
+body=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["body"])' "$HEADERS_FILE")
+assert_eq "$body" '{"source":"new"}' "sessionStart configured POSTs the payload body (proves it POSTed, not stale)"
+
+# ── Case 11: agentStop payload ending in a nested object ("}}") stays valid ─
+# Guards the single-'}' strip: TrimEnd-all-braces would corrupt this body.
+TDIR="$(mktemp -d)"
+printf '%s\n' '{"type":"assistant.message","timestamp":"2026-07-20T09:00:02.000Z","data":{"content":"NESTED ok","interactionId":"main-1"}}' > "$TDIR/events.jsonl"
+printf '%s\n' '{"type":"user.message","timestamp":"2026-07-20T09:00:00.000Z","data":{"content":"hi","interactionId":"main-1"}}' >> "$TDIR/events.jsonl"
+restart_mock '{}'
+NESTED_PAYLOAD=$(printf '{"sessionId":"u1","timestamp":1784538002000,"transcriptPath":"%s","meta":{"k":"v"}}' "$TDIR/events.jsonl")
+set +e; run_dispatcher agentStop "$NESTED_PAYLOAD"; LAST_RC=$?; set -e
+assert_eq "$LAST_RC" "0" "agentStop with nested-object body exits 0"
+body=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["body"])' "$HEADERS_FILE")
+valid=$(printf '%s' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("meta",{}).get("k")=="v" and "transcriptTailB64" in d)')
+assert_eq "$valid" "True" "nested-object body stays valid JSON (meta preserved, tail added)"
+rm -rf "$TDIR"
+
 echo
 echo "All copilot hook.sh tests passed (SH=$SH)."
