@@ -67,6 +67,50 @@
           }
         ]
       }
+    ],
+    "BeforeToolSelection": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${extensionPath}${/}scripts${/}hook.mjs\" BeforeToolSelection",
+            "timeout": 20000
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${extensionPath}${/}scripts${/}hook.mjs\" SessionEnd",
+            "timeout": 20000
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${extensionPath}${/}scripts${/}hook.mjs\" Notification",
+            "timeout": 20000
+          }
+        ]
+      }
+    ],
+    "PreCompress": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${extensionPath}${/}scripts${/}hook.mjs\" PreCompress",
+            "timeout": 20000
+          }
+        ]
+      }
     ]
   }
 }

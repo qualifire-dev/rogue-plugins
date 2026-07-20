@@ -120,19 +120,20 @@ async function main() {
   const env = loadEnvFiles();
   const apiKey = env.ROGUE_API_KEY || "";
 
-  // SessionStart: fire the roster heartbeat and emit an unconfigured hint.
-  // It is not a monitored event, so we never POST it to /hooks/gemini.
+  // SessionStart: fire the detached roster heartbeat, then fall through to POST
+  // the event like any other so it is captured for audit. SessionStart is
+  // advisory in Gemini (its decision is ignored), so the relayed response can't
+  // block — we still send it so nothing is dropped. Unconfigured → emit the
+  // /setup hint and return without POSTing.
   if (EVENT === "SessionStart") {
-    if (apiKey) {
-      fireHeartbeat();
-      log("outcome=heartbeat");
-      return emit({});
+    if (!apiKey) {
+      log("outcome=unconfigured");
+      return emit({
+        systemMessage:
+          "[Rogue Security] Not configured. Run /setup to connect your API key.",
+      });
     }
-    log("outcome=unconfigured");
-    return emit({
-      systemMessage:
-        "[Rogue Security] Not configured. Run /setup to connect your API key.",
-    });
+    fireHeartbeat();
   }
 
   if (!apiKey) {

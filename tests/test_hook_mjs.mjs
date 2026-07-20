@@ -133,3 +133,60 @@ test("unreachable endpoint → fail-open {}", async () => {
   });
   assert.equal(out, "{}");
 });
+
+// Start a server that COLLECTS every request (keyed by url). SessionStart also
+// fires the detached heartbeat to /hooks/status, so a one-shot server would
+// race — this lets us pick out the /hooks/gemini request deterministically.
+function startCollectingServer(status, body) {
+  return new Promise((resolve) => {
+    const requests = [];
+    const server = http.createServer((req, res) => {
+      let b = "";
+      req.on("data", (c) => (b += c));
+      req.on("end", () => {
+        requests.push({ url: req.url, headers: req.headers, body: b });
+        res.writeHead(status, { "Content-Type": "application/json" });
+        res.end(body);
+      });
+    });
+    server.listen(0, "127.0.0.1", () =>
+      resolve({ server, requests, port: server.address().port }),
+    );
+  });
+}
+
+test("SessionStart configured → POSTs the event and relays body", async () => {
+  const relayed = JSON.stringify({ systemMessage: "welcome" });
+  const { server, requests, port } = await startCollectingServer(200, relayed);
+  try {
+    const out = await runHook("SessionStart", '{"session_id":"s1"}', {
+      ROGUE_API_KEY: "rsk_test",
+      ROGUE_ACTOR_EMAIL: "dev@example.com",
+      ROGUE_ACTOR_NAME: "Dev",
+      ROGUE_BASE_URL: `http://127.0.0.1:${port}`,
+    });
+    // The /hooks/gemini POST must have happened with the SessionStart event.
+    const gem = requests.find((r) => r.url.endsWith("/api/v1/hooks/gemini"));
+    assert.ok(gem, "SessionStart must POST to /api/v1/hooks/gemini");
+    assert.equal(gem.headers["x-rogue-event"], "SessionStart");
+    assert.equal(gem.body, '{"session_id":"s1"}');
+    // …and the server body is relayed verbatim on stdout.
+    assert.equal(out, relayed);
+  } finally {
+    server.close();
+  }
+});
+
+test("SessionEnd → POSTs with x-rogue-event SessionEnd", async () => {
+  const { server, seen, port } = await startServer(200, "{}");
+  try {
+    const out = await runHook("SessionEnd", '{"session_id":"s1"}', {
+      ROGUE_API_KEY: "rsk_test",
+      ROGUE_BASE_URL: `http://127.0.0.1:${port}`,
+    });
+    assert.equal(seen.headers["x-rogue-event"], "SessionEnd");
+    assert.equal(out, "{}");
+  } finally {
+    server.close();
+  }
+});
