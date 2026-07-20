@@ -125,6 +125,19 @@ test("non-200 → fail-open {}", async () => {
   }
 });
 
+test("200 with malformed (non-JSON) body → fail-open {}", async () => {
+  const { server, port } = await startServer(200, "not json <html>oops");
+  try {
+    const out = await runHook("BeforeTool", '{"tool_name":"x"}', {
+      ROGUE_API_KEY: "rsk_test",
+      ROGUE_BASE_URL: `http://127.0.0.1:${port}`,
+    });
+    assert.equal(out, "{}", "malformed 200 body must not be relayed verbatim");
+  } finally {
+    server.close();
+  }
+});
+
 test("unreachable endpoint → fail-open {}", async () => {
   const out = await runHook("BeforeAgent", '{"prompt":"hi"}', {
     ROGUE_API_KEY: "rsk_test",

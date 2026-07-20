@@ -165,7 +165,14 @@ async function main() {
     });
     if (resp.ok) {
       const text = await resp.text();
-      if (text && text.trim()) bodyText = text;
+      if (text && text.trim()) {
+        try {
+          JSON.parse(text); // relay only well-formed JSON; malformed → fail-open
+          bodyText = text;
+        } catch {
+          bodyText = "{}";
+        }
+      }
       log(`http=${resp.status} ${describeOutcome(bodyText)}`);
     } else {
       log(`http=${resp.status} outcome=fail-open`);
