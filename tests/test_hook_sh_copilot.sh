@@ -44,6 +44,8 @@ run_dispatcher() {
     ROGUE_API_KEY='' ROGUE_ACTOR_EMAIL='' ROGUE_ACTOR_NAME='' ROGUE_BASE_URL='' \
     ROGUE_LOG_FILE="$tmp_home/hook.log" \
     ROGUE_FLUSH_WAIT_ITERS="${ROGUE_FLUSH_WAIT_ITERS:-}" \
+    ROGUE_COPILOT_STATE_DIR="${ROGUE_COPILOT_STATE_DIR:-}" \
+    ROGUE_SUBAGENT_RESOLVE_ITERS="${ROGUE_SUBAGENT_RESOLVE_ITERS:-}" \
     "$SH" "$HOOK" "$1" <<< "$2" > "$OUT_FILE"
   rc=$?
   set -e
@@ -244,6 +246,48 @@ assert_eq "$LAST_RC" "0" "unflushed agentStop fails open (exit 0)"
 if [ "$ELAPSED" -le 3 ]; then echo "  ok: bounded wait honored (${ELAPSED}s), did not hang"; else echo "FAIL [Case 13]: waited ${ELAPSED}s (unbounded?)" >&2; exit 1; fi
 rm -rf "$TDIR"
 rm -rf "$TDIR"
+
+# ── Case 14: subagent event is re-attributed to its parent session ─────────
+# A subagent's own preToolUse arrives with sessionId = the model tool-call id
+# (toolu_…/call_…). The dispatcher must resolve the parent from the parent
+# transcript's subagent.started line, rewrite the POST body's sessionId to the
+# parent, and tag the POST with x-rogue-subagent-{id,name}.
+SDIR="$(mktemp -d)"
+PARENT="11111111-2222-3333-4444-555555555555"
+mkdir -p "$SDIR/$PARENT"
+printf '%s\n' \
+  '{"type":"user.message","timestamp":"2026-07-20T09:00:00.000Z","data":{"content":"go"}}' \
+  '{"type":"subagent.started","agentId":"toolu_bdrk_TESTSUB","timestamp":"2026-07-20T09:00:01.000Z","data":{"agentName":"task","agentDisplayName":"Task Agent","toolCallId":"toolu_bdrk_TESTSUB"}}' \
+  > "$SDIR/$PARENT/events.jsonl"
+restart_mock '{}'
+export ROGUE_COPILOT_STATE_DIR="$SDIR"
+export ROGUE_SUBAGENT_RESOLVE_ITERS=3
+set +e; run_dispatcher preToolUse '{"sessionId":"toolu_bdrk_TESTSUB","toolName":"bash","toolArgs":{"command":"ls"}}'; LAST_RC=$?; set -e
+unset ROGUE_COPILOT_STATE_DIR ROGUE_SUBAGENT_RESOLVE_ITERS
+assert_eq "$LAST_RC" "0" "re-attributed subagent event exits 0"
+body_sid=$(python3 -c 'import json,sys; print(json.loads(json.load(open(sys.argv[1]))["body"])["sessionId"])' "$HEADERS_FILE")
+assert_eq "$body_sid" "$PARENT" "subagent event sessionId rewritten to the parent session"
+assert_header "x-rogue-subagent-id"   "toolu_bdrk_TESTSUB" "x-rogue-subagent-id carries the real subagent id"
+assert_header "x-rogue-subagent-name" "Task Agent"         "x-rogue-subagent-name carries the display name"
+rm -rf "$SDIR"
+
+# ── Case 15: unresolvable subagent id → fail-open (orphaned, never worse) ────
+# No parent transcript names this id: the dispatcher must NOT hang and must POST
+# the body unchanged (original sessionId), with no subagent headers.
+SDIR="$(mktemp -d)"   # empty state dir
+restart_mock '{}'
+export ROGUE_COPILOT_STATE_DIR="$SDIR"
+export ROGUE_SUBAGENT_RESOLVE_ITERS=2
+START=$(date +%s)
+set +e; run_dispatcher preToolUse '{"sessionId":"call_UNKNOWNSUB","toolName":"bash","toolArgs":{"command":"ls"}}'; LAST_RC=$?; set -e
+ELAPSED=$(( $(date +%s) - START ))
+unset ROGUE_COPILOT_STATE_DIR ROGUE_SUBAGENT_RESOLVE_ITERS
+assert_eq "$LAST_RC" "0" "unresolved subagent event exits 0"
+body_sid=$(python3 -c 'import json,sys; print(json.loads(json.load(open(sys.argv[1]))["body"])["sessionId"])' "$HEADERS_FILE")
+assert_eq "$body_sid" "call_UNKNOWNSUB" "unresolved subagent event keeps its original sessionId (fail-open)"
+assert_no_header "x-rogue-subagent-id" "no x-rogue-subagent-id when unresolved"
+if [ "$ELAPSED" -le 3 ]; then echo "  ok: bounded resolve wait honored (${ELAPSED}s)"; else echo "FAIL [Case 15]: waited ${ELAPSED}s (unbounded?)" >&2; exit 1; fi
+rm -rf "$SDIR"
 
 echo
 echo "All copilot hook.sh tests passed (SH=$SH)."

@@ -150,6 +150,84 @@ try {
 } catch {}
 $payload = $payload.TrimStart([char]0xFEFF)
 
+# ── Subagent re-attribution (mirrors hook.sh) ──────────────────────────────
+# A Copilot subagent's own hook events arrive with sessionId = the model
+# tool-call id (toolu_… / call_…) and no parent reference; persisted verbatim
+# they orphan into a separate audit log. The parent link lives only in the
+# parent session's events.jsonl (a subagent.started line naming this id; the
+# parent id IS that transcript's directory name). Resolve it, rewrite the
+# outgoing sessionId, and tag via x-rogue-subagent-* headers. Fail-open:
+# unresolved → body untouched (today's orphaned behavior — never worse).
+$subagentId = ''
+$subagentName = ''
+$copilotStateDir = $env:ROGUE_COPILOT_STATE_DIR
+if (-not $copilotStateDir) {
+    $copilotStateDir = Join-Path (Join-Path $env:USERPROFILE '.copilot') 'session-state'
+}
+
+function Resolve-SubagentParent {
+    param([string]$Sub)
+    if (-not (Test-Path -LiteralPath $copilotStateDir)) { return $null }
+    foreach ($dir in (Get-ChildItem -LiteralPath $copilotStateDir -Directory -ErrorAction SilentlyContinue)) {
+        $f = Join-Path $dir.FullName 'events.jsonl'
+        if (-not (Test-Path -LiteralPath $f)) { continue }
+        $line = $null
+        foreach ($ln in (Get-Content -LiteralPath $f -ErrorAction SilentlyContinue)) {
+            if (($ln -like '*"subagent.started"*') -and ($ln -like ('*"' + $Sub + '"*'))) { $line = $ln; break }
+        }
+        if (-not $line) { continue }
+        $name = ''
+        $m = [regex]::Match($line, '"agentDisplayName":"([^"]*)"')
+        if ($m.Success) { $name = $m.Groups[1].Value }
+        else {
+            $m2 = [regex]::Match($line, '"agentName":"([^"]*)"')
+            if ($m2.Success) { $name = $m2.Groups[1].Value }
+        }
+        return [pscustomobject]@{ Parent = $dir.Name; Name = $name }
+    }
+    return $null
+}
+
+try {
+    $sidMatch = [regex]::Match($payload, '"sessionId":"([^"]*)"')
+    if ($sidMatch.Success -and ($sidMatch.Groups[1].Value -match '^(toolu_|call_)')) {
+        $sid = $sidMatch.Groups[1].Value
+        $cacheDir = Join-Path (Join-Path $env:USERPROFILE '.rogue') 'copilot-submap'
+        $cacheFile = Join-Path $cacheDir $sid
+        $map = $null
+        if (Test-Path -LiteralPath $cacheFile) {
+            $c = @(Get-Content -LiteralPath $cacheFile -ErrorAction SilentlyContinue)
+            if ($c.Count -ge 1 -and $c[0]) {
+                $map = [pscustomobject]@{ Parent = $c[0]; Name = $(if ($c.Count -ge 2) { [string]$c[1] } else { '' }) }
+            }
+        }
+        if (-not $map) {
+            $max = 20
+            if ($env:ROGUE_SUBAGENT_RESOLVE_ITERS) { try { $max = [int]$env:ROGUE_SUBAGENT_RESOLVE_ITERS } catch {} }
+            if (-not (Test-Path -LiteralPath $copilotStateDir)) { $max = 0 }
+            for ($i = 0; $i -lt $max; $i++) {
+                $map = Resolve-SubagentParent $sid
+                if ($map) { break }
+                Start-Sleep -Milliseconds 100
+            }
+            if ($map) {
+                try {
+                    if (-not (Test-Path -LiteralPath $cacheDir)) { New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null }
+                    Set-Content -LiteralPath $cacheFile -Value @($map.Parent, $map.Name) -Encoding UTF8
+                } catch {}
+            }
+        }
+        if ($map -and $map.Parent) {
+            $subagentId = $sid
+            $subagentName = $map.Name
+            $payload = $payload -replace ('"sessionId":"' + [regex]::Escape($sid) + '"'), ('"sessionId":"' + $map.Parent + '"')
+            Log "subagent=$sid parent=$($map.Parent)"
+        } else {
+            Log "subagent=$sid outcome=unresolved"
+        }
+    }
+} catch { Dbg "subagent re-attribution failed: $($_.Exception.Message)" }
+
 # The agentStop/subagentStop hook can fire before Copilot has flushed the turn's
 # final assistant.message line to events.jsonl (observed ~5-50ms lag), so a naive
 # tail captures a stale transcript missing the very reply we need to evaluate —
@@ -246,6 +324,12 @@ $headers = @{
     'x-rogue-event'       = $EventName
     'x-rogue-actor-email' = $actorEmail
     'x-rogue-actor-name'  = $actorName
+}
+# Subagent events carry the tag headers so the backend can label the
+# (now correctly-attributed) rows; main-agent events send neither.
+if ($subagentId) {
+    $headers['x-rogue-subagent-id'] = $subagentId
+    $headers['x-rogue-subagent-name'] = $subagentName
 }
 $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
 $resp = ''

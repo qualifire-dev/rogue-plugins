@@ -95,6 +95,80 @@ augment_with_transcript() {
   printf '%s,"transcriptTailB64":"%s"}' "${_body%\}}" "$_b64"
 }
 
+# ── Subagent re-attribution ────────────────────────────────────────────────
+# A Copilot subagent's OWN hook events (its preToolUse/postToolUse/
+# userPromptSubmitted/agentStop) arrive with sessionId = the model's tool-call
+# id (`toolu_…` for Claude models, `call_…` for GPT models) and carry NO parent
+# reference. Persisted verbatim they become an ORPHANED audit log named after
+# that id instead of appearing in the conversation that spawned them. The only
+# place the link exists is the PARENT session's events.jsonl, where a
+# `subagent.started` line records this id as its toolCallId/agentId — and the
+# parent session id IS that transcript's directory name. Resolve it and rewrite
+# the outgoing sessionId so the subagent's turns land in the right session,
+# tagged via the x-rogue-subagent-* headers. Fail-open: unresolved → leave the
+# body untouched (i.e. today's orphaned behavior — never worse).
+SUBAGENT_ID=""
+SUBAGENT_NAME=""
+COPILOT_STATE_DIR="${ROGUE_COPILOT_STATE_DIR:-$HOME/.copilot/session-state}"
+
+# $1 = subagent id. Echoes "<parentSessionId>\n<displayName>" on success.
+resolve_subagent_parent() {
+  _sub="$1"
+  [ -d "$COPILOT_STATE_DIR" ] || return 1
+  for _f in "$COPILOT_STATE_DIR"/*/events.jsonl; do
+    [ -r "$_f" ] || continue
+    _line=$(grep '"subagent.started"' "$_f" 2>/dev/null | grep "\"$_sub\"" | head -1)
+    [ -n "$_line" ] || continue
+    _parent=$(basename "$(dirname "$_f")")
+    [ -n "$_parent" ] || continue
+    _name=$(printf '%s' "$_line" | sed -n 's/.*"agentDisplayName":"\([^"]*\)".*/\1/p' | head -1)
+    [ -n "$_name" ] || _name=$(printf '%s' "$_line" | sed -n 's/.*"agentName":"\([^"]*\)".*/\1/p' | head -1)
+    printf '%s\n%s' "$_parent" "$_name"
+    return 0
+  done
+  return 1
+}
+
+# Rewrite BODY's subagent sessionId to its parent and set SUBAGENT_ID/NAME.
+reattribute_subagent() {
+  _sid=$(printf '%s' "$BODY" | sed -n 's/.*"sessionId":"\([^"]*\)".*/\1/p' | head -1)
+  case "$_sid" in
+    toolu_*|call_*) : ;;
+    *) return ;;   # a UUID → main-agent session, nothing to re-attribute
+  esac
+
+  # Resolve once per subagent, then cache (a subagent fires many events).
+  _cache_dir="$HOME/.rogue/copilot-submap"
+  _cache_file="$_cache_dir/$_sid"
+  _map=""
+  if [ -r "$_cache_file" ]; then
+    _map=$(cat "$_cache_file" 2>/dev/null)
+  else
+    # Bounded retry for the flush race: the parent's subagent.started line may
+    # not be on disk yet when the subagent's first event fires. No state dir →
+    # don't spin (fail-open immediately).
+    _n=0
+    _max=${ROGUE_SUBAGENT_RESOLVE_ITERS:-20}   # ~2s at 0.1s/iter
+    [ -d "$COPILOT_STATE_DIR" ] || _max=0
+    while [ "$_n" -lt "$_max" ]; do
+      _map=$(resolve_subagent_parent "$_sid") && [ -n "$_map" ] && break
+      _map=""
+      sleep 0.1
+      _n=$((_n + 1))
+    done
+    [ -n "$_map" ] && { mkdir -p "$_cache_dir" 2>/dev/null; printf '%s' "$_map" > "$_cache_file" 2>/dev/null; }
+  fi
+
+  [ -n "$_map" ] || { log "subagent=$_sid outcome=unresolved"; return; }
+
+  _parent=$(printf '%s' "$_map" | sed -n '1p')
+  SUBAGENT_NAME=$(printf '%s' "$_map" | sed -n '2p')
+  [ -n "$_parent" ] || return
+  SUBAGENT_ID="$_sid"
+  BODY=$(printf '%s' "$BODY" | sed "s/\"sessionId\":\"$_sid\"/\"sessionId\":\"$_parent\"/")
+  log "subagent=$_sid parent=$_parent name=$(sanitize "$SUBAGENT_NAME")"
+}
+
 # Not configured: emit the SessionStart hint (so the user knows to run setup) or a
 # clean allow for every other event. Never POST without a key.
 if [ -z "${ROGUE_API_KEY:-}" ]; then
@@ -113,6 +187,9 @@ URL="${ROGUE_API_URL:-${ROGUE_BASE_URL:-https://api.rogue.security}/api/v1/hooks
 
 # Buffer stdin so we can enrich it (agentStop/subagentStop) before POSTing.
 BODY="$(cat)"
+# Re-attribute a subagent's event to its parent session BEFORE any tail
+# augmentation (a subagent agentStop has no transcriptPath, so augment no-ops).
+reattribute_subagent
 case "$EVENT" in
   agentStop|subagentStop) BODY="$(augment_with_transcript "$BODY")" ;;
 esac
@@ -120,13 +197,27 @@ esac
 # Capture body + HTTP status. -w appends a final line "<code>"; on any transport
 # failure curl exits non-zero and the code is 000. Relay the body ONLY on a clean
 # HTTP 200 so an error page (401/404/500) is never handed to Copilot as a decision.
-RAW=$(printf '%s' "$BODY" | curl -sS -X POST "$URL" \
-  -H "x-rogue-api-key: $ROGUE_API_KEY" \
-  -H "x-rogue-event: $EVENT" \
-  -H "x-rogue-actor-email: $ROGUE_ACTOR_EMAIL" \
-  -H "x-rogue-actor-name: $ROGUE_ACTOR_NAME" \
-  -H 'Content-Type: application/json' \
-  --data-binary @- --max-time 15 -w '\n%{http_code}')
+# Subagent events carry two extra headers so the backend can tag the
+# (now correctly-attributed) rows; main-agent events send neither.
+if [ -n "$SUBAGENT_ID" ]; then
+  RAW=$(printf '%s' "$BODY" | curl -sS -X POST "$URL" \
+    -H "x-rogue-api-key: $ROGUE_API_KEY" \
+    -H "x-rogue-event: $EVENT" \
+    -H "x-rogue-actor-email: $ROGUE_ACTOR_EMAIL" \
+    -H "x-rogue-actor-name: $ROGUE_ACTOR_NAME" \
+    -H "x-rogue-subagent-id: $SUBAGENT_ID" \
+    -H "x-rogue-subagent-name: $SUBAGENT_NAME" \
+    -H 'Content-Type: application/json' \
+    --data-binary @- --max-time 15 -w '\n%{http_code}')
+else
+  RAW=$(printf '%s' "$BODY" | curl -sS -X POST "$URL" \
+    -H "x-rogue-api-key: $ROGUE_API_KEY" \
+    -H "x-rogue-event: $EVENT" \
+    -H "x-rogue-actor-email: $ROGUE_ACTOR_EMAIL" \
+    -H "x-rogue-actor-name: $ROGUE_ACTOR_NAME" \
+    -H 'Content-Type: application/json' \
+    --data-binary @- --max-time 15 -w '\n%{http_code}')
+fi
 RC=$?
 CODE=$(printf '%s' "$RAW" | tail -n1)
 BODY=$(printf '%s' "$RAW" | sed '$d')
