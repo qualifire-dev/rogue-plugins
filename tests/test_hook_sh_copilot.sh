@@ -167,6 +167,24 @@ case "$decoded" in
 esac
 rm -rf "$TDIR"
 
+# ── Case 8b: whitespace around the transcriptPath key/colon still augments ──
+# JSON allows whitespace around keys and colons; the extractor must tolerate it
+# and still produce transcriptTailB64 (regression guard for a pretty-printed
+# stop payload).
+TDIR="$(mktemp -d)"
+printf '%s\n' \
+  '{"type":"assistant.message","timestamp":"2026-07-20T09:00:02.000Z","data":{"content":"WS final","interactionId":"main-1"}}' \
+  '{"type":"assistant.turn_end","timestamp":"2026-07-20T09:00:02.100Z"}' \
+  > "$TDIR/events.jsonl"
+restart_mock '{}'
+WS_PAYLOAD=$(printf '{"sessionId":"u1", "transcriptPath" : "%s"}' "$TDIR/events.jsonl")
+set +e; run_dispatcher agentStop "$WS_PAYLOAD"; LAST_RC=$?; set -e
+assert_eq "$LAST_RC" "0" "whitespace-formatted agentStop exits 0"
+body=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["body"])' "$HEADERS_FILE")
+valid=$(printf '%s' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("transcriptTailB64" in d)')
+assert_eq "$valid" "True" "whitespace-formatted transcriptPath still yields transcriptTailB64"
+rm -rf "$TDIR"
+
 # ── Case 9: agentStop with unreadable transcriptPath → body unchanged, exit 0
 restart_mock '{}'
 set +e; run_dispatcher agentStop '{"sessionId":"u1","timestamp":1,"stopReason":"end_turn","transcriptPath":"/no/such/file.jsonl"}'; LAST_RC=$?; set -e

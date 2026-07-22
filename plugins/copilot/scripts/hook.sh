@@ -86,7 +86,7 @@ wait_for_transcript_flush() {
 
 augment_with_transcript() {
   _body="$1"
-  _tp=$(printf '%s' "$_body" | sed -n 's/.*"transcriptPath":"\([^"]*\)".*/\1/p')
+  _tp=$(printf '%s' "$_body" | sed -n 's/.*"transcriptPath"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
   [ -n "$_tp" ] || { printf '%s' "$_body"; return; }
   [ -r "$_tp" ] || { printf '%s' "$_body"; return; }
   wait_for_transcript_flush "$_tp"

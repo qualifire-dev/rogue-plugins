@@ -281,7 +281,7 @@ function Wait-TranscriptFlush {
 # any problem returns the payload unchanged.
 if ($EventName -eq 'agentStop' -or $EventName -eq 'subagentStop') {
     try {
-        $m = [regex]::Match($payload, '"transcriptPath":"([^"]*)"')
+        $m = [regex]::Match($payload, '"transcriptPath"\s*:\s*"([^"]*)"')
         if ($m.Success) {
             $tp = $m.Groups[1].Value
             if ($tp -and (Test-Path -LiteralPath $tp)) {
