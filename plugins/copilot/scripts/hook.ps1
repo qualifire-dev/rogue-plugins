@@ -189,7 +189,7 @@ function Resolve-SubagentParent {
 }
 
 try {
-    $sidMatch = [regex]::Match($payload, '"sessionId":"([^"]*)"')
+    $sidMatch = [regex]::Match($payload, '"sessionId"\s*:\s*"([^"]*)"')
     if ($sidMatch.Success -and ($sidMatch.Groups[1].Value -match '^(toolu_|call_)')) {
         $sid = $sidMatch.Groups[1].Value
         $cacheDir = Join-Path (Join-Path $env:USERPROFILE '.rogue') 'copilot-submap'
@@ -220,7 +220,7 @@ try {
         if ($map -and $map.Parent) {
             $subagentId = $sid
             $subagentName = $map.Name
-            $payload = $payload -replace ('"sessionId":"' + [regex]::Escape($sid) + '"'), ('"sessionId":"' + $map.Parent + '"')
+            $payload = $payload -replace ('"sessionId"\s*:\s*"' + [regex]::Escape($sid) + '"'), ('"sessionId":"' + $map.Parent + '"')
             Log "subagent=$sid parent=$($map.Parent)"
         } else {
             Log "subagent=$sid outcome=unresolved"

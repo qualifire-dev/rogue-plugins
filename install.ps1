@@ -171,7 +171,19 @@ if ($ApiKey) {
     Log 'Validating API key...'
     try {
         $hostName = $env:COMPUTERNAME; if (-not $hostName) { $hostName = 'unknown' }
-        $body = @{ agent_family = 'claude'; agent = 'Claude Code - CLI'; host = $hostName; actor_email = [string]$Email } | ConvertTo-Json -Compress
+        # /api/v1/hooks/status has side effects (it registers/updates the roster
+        # row), so register under an agent actually being installed — a
+        # Copilot-only or Codex-only
+        # install must NOT create a bogus Claude roster row. Prefer claude when
+        # it's a target (its heartbeat backs the row, preserving prior behavior);
+        # otherwise use the first selected agent. Values mirror each heartbeat.
+        $scFamily = 'claude'; $scAgent = 'Claude Code - CLI'
+        if ($hasClaude)      { $scFamily = 'claude';  $scAgent = 'Claude Code - CLI' }
+        elseif ($hasCodex)   { $scFamily = 'openai';  $scAgent = 'codex_cli' }
+        elseif ($hasCursor)  { $scFamily = 'cursor';  $scAgent = 'cursor' }
+        elseif ($hasGemini)  { $scFamily = 'gemini';  $scAgent = 'gemini_cli' }
+        elseif ($hasCopilot) { $scFamily = 'copilot'; $scAgent = 'github_copilot' }
+        $body = @{ agent_family = $scFamily; agent = $scAgent; host = $hostName; actor_email = [string]$Email } | ConvertTo-Json -Compress
         $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
         $resp = Invoke-WebRequest -Uri "$($BaseUrl.TrimEnd('/'))/api/v1/hooks/status" -Method Post `
             -Headers @{ 'x-rogue-api-key' = $ApiKey } -ContentType 'application/json' `

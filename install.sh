@@ -312,17 +312,39 @@ gemini_install_extension() {
 # roster row deduped with the later heartbeats.
 STATUS_ORG=""
 STATUS_UPDATE=""
+# /api/v1/hooks/status has side effects (it registers/updates the roster row), so
+# the key-validation POST must register under an agent that is actually being
+# installed — a Copilot-only or Codex-only install must NOT create a bogus Claude
+# roster row. Resolve the family/agent from the selected `agents`: prefer claude
+# when it's a target (its heartbeat backs the row, preserving today's behavior);
+# otherwise use the first selected agent so the row matches a plugin whose
+# heartbeat will run. Values mirror each plugin's heartbeat body.
+status_agent_ctx() { # sets SC_FAMILY / SC_AGENT from $agents
+  local a
+  for a in ${agents:-}; do
+    [ "$a" = claude ] && { SC_FAMILY="claude"; SC_AGENT="Claude Code - CLI"; return; }
+  done
+  set -- ${agents:-claude}
+  case "${1:-claude}" in
+    codex)   SC_FAMILY="openai";  SC_AGENT="codex_cli" ;;
+    cursor)  SC_FAMILY="cursor";  SC_AGENT="cursor" ;;
+    gemini)  SC_FAMILY="gemini";  SC_AGENT="gemini_cli" ;;
+    copilot) SC_FAMILY="copilot"; SC_AGENT="github_copilot" ;;
+    *)       SC_FAMILY="claude";  SC_AGENT="Claude Code - CLI" ;;
+  esac
+}
 status_check() { # status_check <api-key> <actor-email>
   have_cmd curl || { printf ''; return; }
   local resp code body host json
   host="$(hostname 2>/dev/null || echo unknown)"
+  status_agent_ctx
   # POST /api/v1/hooks/status with a JSON body — the GET route was removed
   # (see plugins/rogue/scripts/heartbeat.sh). The former x-rogue-agent-*
   # headers now ride the body; x-rogue-api-key stays a header. esc() so a host
   # or email with a " or \ can't break the JSON.
   esc() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
-  json=$(printf '{"agent_family":"claude","agent":"Claude Code - CLI","host":"%s","actor_email":"%s"}' \
-    "$(esc "$host")" "$(esc "${2:-}")")
+  json=$(printf '{"agent_family":"%s","agent":"%s","host":"%s","actor_email":"%s"}' \
+    "$SC_FAMILY" "$SC_AGENT" "$(esc "$host")" "$(esc "${2:-}")")
   resp=$(curl -s -w $'\n%{http_code}' --max-time 10 -X POST \
     "$ROGUE_BASE_URL/api/v1/hooks/status" \
     -H "x-rogue-api-key: $1" \

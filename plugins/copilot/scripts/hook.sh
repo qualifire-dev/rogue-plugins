@@ -92,6 +92,11 @@ augment_with_transcript() {
   wait_for_transcript_flush "$_tp"
   _b64=$(tail -c 262144 "$_tp" 2>/dev/null | base64 2>/dev/null | tr -d '\r\n')
   [ -n "$_b64" ] || { printf '%s' "$_body"; return; }
+  # Trim trailing whitespace (a pretty-printed stop payload can end in spaces or
+  # a newline after the closing brace) so the single-'}' strip lands on the real
+  # closing brace. Without it "${_body%\}}" no-ops and we emit invalid JSON
+  # ({...}  ,"transcriptTailB64":...). Mirrors hook.ps1's $payload.TrimEnd().
+  _body="${_body%"${_body##*[![:space:]]}"}"
   printf '%s,"transcriptTailB64":"%s"}' "${_body%\}}" "$_b64"
 }
 
@@ -131,7 +136,7 @@ resolve_subagent_parent() {
 
 # Rewrite BODY's subagent sessionId to its parent and set SUBAGENT_ID/NAME.
 reattribute_subagent() {
-  _sid=$(printf '%s' "$BODY" | sed -n 's/.*"sessionId":"\([^"]*\)".*/\1/p' | head -1)
+  _sid=$(printf '%s' "$BODY" | sed -n 's/.*"sessionId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
   case "$_sid" in
     toolu_*|call_*) : ;;
     *) return ;;   # a UUID → main-agent session, nothing to re-attribute
@@ -165,7 +170,10 @@ reattribute_subagent() {
   SUBAGENT_NAME=$(printf '%s' "$_map" | sed -n '2p')
   [ -n "$_parent" ] || return
   SUBAGENT_ID="$_sid"
-  BODY=$(printf '%s' "$BODY" | sed "s/\"sessionId\":\"$_sid\"/\"sessionId\":\"$_parent\"/")
+  # Tolerate whitespace around the key/colon (a pretty-printed payload) and
+  # normalize to compact form; a non-matching rewrite would leave the body
+  # orphaned even though we resolved the parent.
+  BODY=$(printf '%s' "$BODY" | sed "s/\"sessionId\"[[:space:]]*:[[:space:]]*\"$_sid\"/\"sessionId\":\"$_parent\"/")
   log "subagent=$_sid parent=$_parent name=$(sanitize "$SUBAGENT_NAME")"
 }
 
