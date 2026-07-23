@@ -1,0 +1,351 @@
+# Rogue Security hook bridge for GitHub Copilot CLI — PowerShell implementation.
+#
+# Cross-platform sibling of hook.sh. hooks.json fires the `bash` command on
+# macOS/Linux and this `powershell` command on Windows (Copilot prefers pwsh 7+
+# but falls back to Windows PowerShell 5.1 — so this stays 5.1-compatible).
+# PURE RELAY: reads one Copilot hook event JSON on stdin, POSTs it to
+# /api/v1/hooks/copilot, relays the native Copilot decision verbatim. No
+# block-detection and no local modal — Copilot renders the native deny shape.
+#
+# FAIL-OPEN IS SAFETY-CRITICAL. Copilot's preToolUse is fail-CLOSED: a non-zero
+# exit denies the tool. This script emits `{}` on every failure path and always
+# exits 0; the loader in hooks.json additionally wraps the call in try/catch and
+# `; exit 0`. A block is carried in the relayed JSON body, never the exit code.
+#
+# Loaded via [scriptblock]::Create((Get-Content ...)) rather than -File, so it
+# runs regardless of ExecutionPolicy/GPO. Because it is a scriptblock (not a
+# file), $PSCommandPath is empty — hooks.json passes the plugin root as the 2nd
+# argument.
+#
+# Credential resolution (later file wins; process env wins over all):
+#   1. ${PLUGIN_ROOT}\env          (baked into a compiled customer plugin)
+#   2. C:\ProgramData\rogue\env    (MDM-provisioned; mirrors /etc/rogue/env)
+#   3. %USERPROFILE%\.rogue-env    (user / installer-written)
+
+param([string]$EventName = '', [string]$PluginRoot = '')
+
+$ErrorActionPreference = 'SilentlyContinue'
+$ProgressPreference = 'SilentlyContinue'
+
+function Write-Raw {
+    param([string]$Text)
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+    $stdout = [Console]::OpenStandardOutput()
+    $stdout.Write($bytes, 0, $bytes.Length)
+    $stdout.Flush()
+}
+function Dbg { param([string]$Msg) if ($env:ROGUE_DEBUG) { [Console]::Error.WriteLine("[rogue] $Msg") } }
+
+function ConvertFrom-ShellQuoted {
+    # Decode one shell "word" the way hook.sh would when it sources the env file,
+    # so values round-trip across both bridges (POSIX single-quoted or bash %q).
+    param([string]$Val)
+    if ($null -eq $Val) { return $Val }
+    $sb = [System.Text.StringBuilder]::new()
+    $i = 0; $n = $Val.Length; $state = 'normal'
+    while ($i -lt $n) {
+        $c = $Val[$i]
+        switch ($state) {
+            'single' { if ($c -eq "'") { $state = 'normal' } else { [void]$sb.Append($c) } }
+            'double' {
+                if ($c -eq '"') { $state = 'normal' }
+                elseif ($c -eq '\' -and ($i + 1) -lt $n -and ('"\$`'.IndexOf($Val[$i+1]) -ge 0)) { [void]$sb.Append($Val[$i+1]); $i++ }
+                else { [void]$sb.Append($c) }
+            }
+            default {
+                if ($c -eq "'") { $state = 'single' }
+                elseif ($c -eq '"') { $state = 'double' }
+                elseif ($c -eq '\' -and ($i + 1) -lt $n) { [void]$sb.Append($Val[$i+1]); $i++ }
+                else { [void]$sb.Append($c) }
+            }
+        }
+        $i++
+    }
+    return $sb.ToString()
+}
+
+# Windows PowerShell 5.1 may negotiate only TLS 1.0/1.1 by default; add TLS 1.2.
+try {
+    [Net.ServicePointManager]::SecurityProtocol = `
+        [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+} catch {}
+
+# Stand down on non-Windows (Copilot runs hook.sh there; this guards a stray pwsh).
+if ($PSVersionTable.PSVersion.Major -ge 6 -and -not $IsWindows) { Write-Raw '{}'; exit 0 }
+
+if (-not $EventName) { Write-Raw '{}'; exit 0 }
+Dbg "event=$EventName"
+
+if (-not $PluginRoot) { $PluginRoot = $env:COPILOT_PLUGIN_ROOT }
+if (-not $PluginRoot) { try { $PluginRoot = (Get-Location).Path } catch { $PluginRoot = '.' } }
+
+$logFile = $env:ROGUE_LOG_FILE
+if (-not $logFile) { $logFile = Join-Path (Join-Path $env:USERPROFILE '.rogue') 'hook.log' }
+function Sanitize { param([string]$S) if ($null -eq $S) { return '' } ($S -replace '[\x00-\x1f\x7f]', '') }
+function Log {
+    param([string]$Msg)
+    try {
+        $dir = Split-Path $logFile
+        if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        $stamp = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+        Add-Content -LiteralPath $logFile -Value "$stamp provider=github_copilot event=$EventName $Msg" -Encoding UTF8
+    } catch {}
+}
+
+# ── credential resolution (later file wins; process env wins over all) ─────
+$creds = @{}
+foreach ($f in @((Join-Path $PluginRoot 'env'), 'C:\ProgramData\rogue\env', (Join-Path $env:USERPROFILE '.rogue-env'))) {
+    if (-not $f -or -not (Test-Path -LiteralPath $f)) { continue }
+    foreach ($line in (Get-Content -LiteralPath $f)) {
+        if ($line -match '^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)=(.+)$') {
+            $creds[$Matches[1]] = ConvertFrom-ShellQuoted ($Matches[2].Trim())
+        }
+    }
+}
+foreach ($k in 'ROGUE_API_KEY','ROGUE_ACTOR_EMAIL','ROGUE_ACTOR_NAME','ROGUE_BASE_URL','ROGUE_API_URL') {
+    $val = [Environment]::GetEnvironmentVariable($k); if ($val) { $creds[$k] = $val }
+}
+
+$apiKey = $creds['ROGUE_API_KEY']
+
+# Not configured: emit the SessionStart hint (so the user knows to run setup) or
+# a clean allow for every other event. Never POST without a key. When a key IS
+# present, sessionStart falls through to the POST path below (audit/persistence);
+# the heartbeat runs from a separate hooks.json entry.
+if (-not $apiKey) {
+    Log 'outcome=unconfigured'
+    if ($EventName -eq 'sessionStart') {
+        Write-Raw '{"additionalContext":"[Rogue Security] Not configured. Run /rogue:setup to connect your API key."}'
+    } else {
+        Write-Raw '{}'
+    }
+    exit 0
+}
+
+# URL: explicit ROGUE_API_URL wins, else base + path.
+$url = $creds['ROGUE_API_URL']
+if (-not $url) {
+    $baseUrl = $creds['ROGUE_BASE_URL']; if (-not $baseUrl) { $baseUrl = 'https://api.rogue.security' }
+    $url = "$($baseUrl.TrimEnd('/'))/api/v1/hooks/copilot"
+}
+
+# ── actor resolution (mirrors actor.sh) ────────────────────────────────────
+$actorName = $creds['ROGUE_ACTOR_NAME']
+if (-not $actorName) { try { $actorName = (& git config --global user.name 2>$null | Out-String).Trim() } catch {} }
+if (-not $actorName) { $actorName = $env:USERNAME }
+
+$actorEmail = $creds['ROGUE_ACTOR_EMAIL']
+if (-not $actorEmail) { try { $actorEmail = (& git config --global user.email 2>$null | Out-String).Trim() } catch {} }
+if (-not $actorEmail) {
+    if ($env:USERNAME -and $env:COMPUTERNAME) { $actorEmail = "$($env:USERNAME)@$($env:COMPUTERNAME)" }
+    elseif ($env:USERNAME) { $actorEmail = $env:USERNAME } else { $actorEmail = $env:COMPUTERNAME }
+}
+
+# ── payload from stdin (recover UTF-8, strip BOM) ──────────────────────────
+$payload = [Console]::In.ReadToEnd()
+if (-not $payload) { $payload = '{}' }
+try {
+    $raw = [Console]::InputEncoding.GetBytes($payload)
+    $payload = [System.Text.Encoding]::UTF8.GetString($raw)
+} catch {}
+$payload = $payload.TrimStart([char]0xFEFF)
+
+# ── Subagent re-attribution (mirrors hook.sh) ──────────────────────────────
+# A Copilot subagent's own hook events arrive with sessionId = the model
+# tool-call id (toolu_… / call_…) and no parent reference; persisted verbatim
+# they orphan into a separate audit log. The parent link lives only in the
+# parent session's events.jsonl (a subagent.started line naming this id; the
+# parent id IS that transcript's directory name). Resolve it, rewrite the
+# outgoing sessionId, and tag via x-rogue-subagent-* headers. Fail-open:
+# unresolved → body untouched (today's orphaned behavior — never worse).
+$subagentId = ''
+$subagentName = ''
+$copilotStateDir = $env:ROGUE_COPILOT_STATE_DIR
+if (-not $copilotStateDir) {
+    $copilotStateDir = Join-Path (Join-Path $env:USERPROFILE '.copilot') 'session-state'
+}
+
+function Resolve-SubagentParent {
+    param([string]$Sub)
+    if (-not (Test-Path -LiteralPath $copilotStateDir)) { return $null }
+    foreach ($dir in (Get-ChildItem -LiteralPath $copilotStateDir -Directory -ErrorAction SilentlyContinue)) {
+        $f = Join-Path $dir.FullName 'events.jsonl'
+        if (-not (Test-Path -LiteralPath $f)) { continue }
+        $line = $null
+        foreach ($ln in (Get-Content -LiteralPath $f -ErrorAction SilentlyContinue)) {
+            if (($ln -like '*"subagent.started"*') -and ($ln -like ('*"' + $Sub + '"*'))) { $line = $ln; break }
+        }
+        if (-not $line) { continue }
+        $name = ''
+        $m = [regex]::Match($line, '"agentDisplayName":"([^"]*)"')
+        if ($m.Success) { $name = $m.Groups[1].Value }
+        else {
+            $m2 = [regex]::Match($line, '"agentName":"([^"]*)"')
+            if ($m2.Success) { $name = $m2.Groups[1].Value }
+        }
+        return [pscustomobject]@{ Parent = $dir.Name; Name = $name }
+    }
+    return $null
+}
+
+try {
+    $sidMatch = [regex]::Match($payload, '"sessionId"\s*:\s*"([^"]*)"')
+    if ($sidMatch.Success -and ($sidMatch.Groups[1].Value -match '^(toolu_|call_)')) {
+        $sid = $sidMatch.Groups[1].Value
+        $cacheDir = Join-Path (Join-Path $env:USERPROFILE '.rogue') 'copilot-submap'
+        $cacheFile = Join-Path $cacheDir $sid
+        $map = $null
+        if (Test-Path -LiteralPath $cacheFile) {
+            $c = @(Get-Content -LiteralPath $cacheFile -ErrorAction SilentlyContinue)
+            if ($c.Count -ge 1 -and $c[0]) {
+                $map = [pscustomobject]@{ Parent = $c[0]; Name = $(if ($c.Count -ge 2) { [string]$c[1] } else { '' }) }
+            }
+        }
+        if (-not $map) {
+            $max = 20
+            if ($env:ROGUE_SUBAGENT_RESOLVE_ITERS) { try { $max = [int]$env:ROGUE_SUBAGENT_RESOLVE_ITERS } catch {} }
+            if (-not (Test-Path -LiteralPath $copilotStateDir)) { $max = 0 }
+            for ($i = 0; $i -lt $max; $i++) {
+                $map = Resolve-SubagentParent $sid
+                if ($map) { break }
+                Start-Sleep -Milliseconds 100
+            }
+            if ($map) {
+                try {
+                    if (-not (Test-Path -LiteralPath $cacheDir)) { New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null }
+                    Set-Content -LiteralPath $cacheFile -Value @($map.Parent, $map.Name) -Encoding UTF8
+                } catch {}
+            }
+        }
+        if ($map -and $map.Parent) {
+            $subagentId = $sid
+            $subagentName = $map.Name
+            $payload = $payload -replace ('"sessionId"\s*:\s*"' + [regex]::Escape($sid) + '"'), ('"sessionId":"' + $map.Parent + '"')
+            Log "subagent=$sid parent=$($map.Parent)"
+        } else {
+            Log "subagent=$sid outcome=unresolved"
+        }
+    }
+} catch { Dbg "subagent re-attribution failed: $($_.Exception.Message)" }
+
+# The agentStop/subagentStop hook can fire before Copilot has flushed the turn's
+# final assistant.message line to events.jsonl (observed ~5-50ms lag), so a naive
+# tail captures a stale transcript missing the very reply we need to evaluate —
+# the reply is silently dropped. File appends are ordered, so once the turn's
+# closing "assistant.turn_end" line is on disk, every earlier line of the turn
+# (incl. the final assistant.message) is too. Poll (bounded) until the last
+# non-hook line is an assistant.turn_end. Mirrors hook.sh's wait_for_transcript_flush.
+function Wait-TranscriptFlush {
+    param([string]$Path)
+    # ~5s cap (50 * 100ms). Covers disk FLUSH lag after the completed
+    # assistant.message is written — NOT streaming time (agentStop fires only
+    # after the turn completes). ROGUE_FLUSH_WAIT_ITERS overrides the count
+    # (tests set it low to exercise the fail-open path). Mirrors hook.sh.
+    $max = 50
+    if ($env:ROGUE_FLUSH_WAIT_ITERS) { try { $max = [int]$env:ROGUE_FLUSH_WAIT_ITERS } catch {} }
+    for ($i = 0; $i -lt $max; $i++) {   # happy path returns in 0-1 iters
+        try {
+            $last = $null
+            $fs = [System.IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite')
+            try {
+                $len = $fs.Length
+                $take = [Math]::Min(262144, $len)
+                if ($take -gt 0) {
+                    [void]$fs.Seek($len - $take, 'Begin')
+                    $buf = New-Object byte[] $take
+                    $read = 0
+                    while ($read -lt $take) {
+                        $n = $fs.Read($buf, $read, $take - $read)
+                        if ($n -le 0) { break }
+                        $read += $n
+                    }
+                    $txt = [System.Text.Encoding]::UTF8.GetString($buf, 0, $read)
+                    foreach ($ln in ($txt -split "`n")) {
+                        $t = $ln.Trim()
+                        if (-not $t) { continue }
+                        if ($t -like '*"hook.*') { continue }
+                        $last = $t
+                    }
+                }
+            } finally { $fs.Close() }
+            if ($last -and $last -like '*"assistant.turn_end"*') { return }
+        } catch { return }
+        Start-Sleep -Milliseconds 100
+    }
+}
+
+# agentStop / subagentStop carry no message content inline — only a
+# transcriptPath. Append the last ~256KB of that events.jsonl file, base64-
+# encoded, as "transcriptTailB64" so the backend can extract the final message.
+# base64 has no JSON-special chars, so re-closing the object is safe. Fail-open:
+# any problem returns the payload unchanged.
+if ($EventName -eq 'agentStop' -or $EventName -eq 'subagentStop') {
+    try {
+        $m = [regex]::Match($payload, '"transcriptPath"\s*:\s*"([^"]*)"')
+        if ($m.Success) {
+            $tp = $m.Groups[1].Value
+            if ($tp -and (Test-Path -LiteralPath $tp)) {
+                Wait-TranscriptFlush $tp
+                $fs = [System.IO.File]::Open($tp, 'Open', 'Read', 'ReadWrite')
+                try {
+                    $len = $fs.Length
+                    $take = [Math]::Min(262144, $len)
+                    if ($take -gt 0) {
+                        [void]$fs.Seek($len - $take, 'Begin')
+                        $buf = New-Object byte[] $take
+                        # Stream.Read may return fewer bytes than requested — loop
+                        # until $take bytes are read (or EOF) so no trailing NULs
+                        # leak into the base64.
+                        $read = 0
+                        while ($read -lt $take) {
+                            $n = $fs.Read($buf, $read, $take - $read)
+                            if ($n -le 0) { break }
+                            $read += $n
+                        }
+                        if ($read -gt 0) {
+                            $b64 = [Convert]::ToBase64String($buf, 0, $read)
+                            # Strip exactly ONE trailing '}' (mirrors hook.sh's
+                            # "${_body%\}}"). String.TrimEnd('}') would strip ALL
+                            # trailing braces and corrupt a body ending in "}}".
+                            $p = $payload.TrimEnd()
+                            if ($p.EndsWith('}')) { $p = $p.Substring(0, $p.Length - 1) }
+                            if ($b64) { $payload = $p + ',"transcriptTailB64":"' + $b64 + '"}' }
+                        }
+                    }
+                } finally { $fs.Close() }
+            }
+        }
+    } catch { Dbg "transcript augment failed: $($_.Exception.Message)" }
+}
+
+# ── POST (fail-open) → relay verbatim ──────────────────────────────────────
+$headers = @{
+    'x-rogue-api-key'     = $apiKey
+    'x-rogue-event'       = $EventName
+    'x-rogue-actor-email' = $actorEmail
+    'x-rogue-actor-name'  = $actorName
+}
+# Subagent events carry the tag headers so the backend can label the
+# (now correctly-attributed) rows; main-agent events send neither.
+if ($subagentId) {
+    $headers['x-rogue-subagent-id'] = $subagentId
+    $headers['x-rogue-subagent-name'] = $subagentName
+}
+$bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
+$resp = ''
+try {
+    $r = Invoke-WebRequest -Uri $url -Method Post `
+        -Headers $headers -ContentType 'application/json' -Body $bodyBytes `
+        -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
+    if ($r.StatusCode -eq 200) {
+        try { $resp = [System.Text.Encoding]::UTF8.GetString($r.RawContentStream.ToArray()) }
+        catch { $resp = [string]$r.Content }
+    }
+} catch { Dbg "POST failed: $($_.Exception.Message)"; $resp = '' }
+
+$respHead = if ($resp.Length -gt 400) { $resp.Substring(0, 400) } else { $resp }
+Log "raw=$(Sanitize $respHead)"
+
+if (-not $resp) { Write-Raw '{}'; exit 0 }
+Write-Raw $resp
+exit 0

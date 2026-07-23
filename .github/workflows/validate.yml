@@ -41,6 +41,7 @@ jobs:
           plugins/rogue/.claude-plugin/plugin.json|.claude-plugin/marketplace.json|./plugins/rogue
           plugins/codex/.codex-plugin/plugin.json|.agents/plugins/marketplace.json|./plugins/codex
           plugins/cursor/.cursor-plugin/plugin.json|.cursor-plugin/marketplace.json|./plugins/cursor
+          plugins/copilot/plugin.json|.github/plugin/marketplace.json|./plugins/copilot
           "
           fail=0
           echo "$rows" | while IFS='|' read -r plugin market src; do
