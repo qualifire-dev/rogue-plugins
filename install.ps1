@@ -172,11 +172,11 @@ if ($ApiKey) {
     try {
         $hostName = $env:COMPUTERNAME; if (-not $hostName) { $hostName = 'unknown' }
         # /api/v1/hooks/status has side effects (it registers/updates the roster
-        # row), so register under an agent actually being installed — a
-        # Copilot-only or Codex-only
-        # install must NOT create a bogus Claude roster row. Prefer claude when
-        # it's a target (its heartbeat backs the row, preserving prior behavior);
-        # otherwise use the first selected agent. Values mirror each heartbeat.
+        # row), so register under an agent actually being installed — a Copilot-
+        # only or Codex-only install must NOT create a bogus Claude roster row.
+        # Prefer claude when it's a target (its heartbeat backs the row,
+        # preserving prior behavior); otherwise use the first selected agent.
+        # Values mirror each heartbeat.
         $scFamily = 'claude'; $scAgent = 'Claude Code - CLI'
         if ($hasClaude)      { $scFamily = 'claude';  $scAgent = 'Claude Code - CLI' }
         elseif ($hasCodex)   { $scFamily = 'openai';  $scAgent = 'codex_cli' }
