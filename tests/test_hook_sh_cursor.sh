@@ -26,6 +26,12 @@ TEST_PATH=""
 cleanup() {
   [ -n "${MOCK_PID:-}" ] && kill "$MOCK_PID" 2>/dev/null || true
   rm -f "$ENV_FILE" "$HEADERS_FILE" "$OUT_FILE"
+  # Fixture temp dirs/files are created as the cases run, so each needs a :- guard
+  # for an exit that happens before its case. $PDF_DIR is the one that matters:
+  # Case 9's over-cap file alone is 1 MiB, so leaking it costs megabytes a run.
+  [ -n "${PDF_DIR:-}" ] && rm -rf "$PDF_DIR" || true
+  [ -n "${BIN_DIR:-}" ] && rm -rf "$BIN_DIR" || true
+  [ -n "${PRE_FILE:-}" ] && rm -f "$PRE_FILE" || true
 }
 trap cleanup EXIT
 
@@ -66,8 +72,10 @@ run_dispatcher() {
 # Build a PATH that has everything the dispatcher needs EXCEPT jq, so its concat
 # fallback runs. jq (on macOS 26: /usr/bin/jq) sits in the same directory as the
 # rest of the toolchain, so hiding it means rebuilding PATH as a symlink farm
-# rather than dropping a directory. A missing entry can't cause a false pass: the
-# dispatcher would fail-open and the byte-identical assertion below would fail.
+# rather than dropping a directory. A missing entry can't cause a false pass, for
+# two reasons that don't depend on how the dispatcher reacts to it: the farm build
+# below aborts the suite outright if a listed binary is not on PATH, and Case 12
+# asserts the no-jq run posted a request of its own before comparing bodies.
 # `wc` is in the list because the dispatcher calls `wc -c` in log rotation and in
 # both enrichment paths — without it every no-jq case fails for the wrong reason.
 # Echoes the farm dir; the caller sets TEST_PATH and removes it afterwards.
@@ -212,7 +220,7 @@ assert_eq "$(posted_field rogueFilePreImageB64)" "$(printf 'flask==1.0.0\n' | ba
 stop_mock
 
 # ── Case 4: pre-image is NOT attached for a binary extension ──────────────
-BIN_FILE="$(mktemp -d)/x.png"; printf 'notreallyapng' > "$BIN_FILE"
+BIN_DIR="$(mktemp -d)"; BIN_FILE="$BIN_DIR/x.png"; printf 'notreallyapng' > "$BIN_FILE"
 start_mock '{}'
 run_dispatcher preToolUse "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$BIN_FILE\",\"contents\":\"x\"}}" >/dev/null
 assert_eq "$(posted_field rogueFilePreImageB64)" "" "no pre-image for a recognized binary extension"
@@ -297,16 +305,22 @@ stop_mock
 start_mock '{}'
 NOJQ_DIR="$(make_nojq_path)"
 TEST_PATH="$NOJQ_DIR"
+# The mock rewrites $HEADERS_FILE only when a request actually lands, and nothing
+# else truncates it, so a no-jq run that posted NOTHING would leave the jq run's
+# own record in place and the comparison below would match that record against
+# itself. Truncating first, plus the guard, turns that into a named failure.
+: > "$HEADERS_FILE"
 run_dispatcher beforeReadFile "{\"content\":\"\",\"file_path\":\"$PDF_FILE\"}" >/dev/null
-without_jq="$(posted_body)"
 TEST_PATH=""
 rm -rf "$NOJQ_DIR"
 stop_mock
+if [ -s "$HEADERS_FILE" ]; then nojq_posted="yes"; else nojq_posted="no"; fi
+assert_eq "$nojq_posted" "yes" "the no-jq run posts a request of its own"
+without_jq="$(posted_body)"
 # The payload is compact, so jq's reserialization is a no-op and the two bodies
 # must match byte for byte. Only ONE of these paths ever runs on a given machine,
 # which is exactly why they have to be pinned to each other here.
 assert_eq "$with_jq" "$without_jq" "jq and string-concat paths produce identical bodies"
-
 
 # ── Case 13: a backslash in the path attaches nothing ────────────────────
 # Pins a DELIBERATE divergence from hook.ps1: this dispatcher bails on any path
