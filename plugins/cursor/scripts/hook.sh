@@ -373,8 +373,77 @@ augment_with_pre_image() {
   printf '%s%s"rogueFilePreImageB64":"%s"}' "$_pre" "$_sep" "$_b64"
 }
 
+# ── File read capture (beforeReadFile only) ────────────────────────────────
+# Cursor sends `beforeReadFile` with an EMPTY `content` for some file types. When
+# that happens the file's own bytes are attached as `rogueFileReadB64`, so the
+# request carries the file rather than only its path.
+#
+# Unlike the pre-image, a file OVER the cap is TRUNCATED to the cap rather than
+# skipped: this field is never used as a baseline to subtract, so a prefix is
+# useful where a partial baseline would be actively wrong.
+#
+# Fail-open in every branch — a non-empty `content`, an extension outside the
+# list, a relative path, a missing or unreadable file, a zero-byte file or a read
+# error all leave the relayed body byte-identical.
+READ_CAPTURE_MAX_BYTES=1048576
+
+_is_read_capture_path() {
+  _rc_base=$(printf '%s' "${1##*/}" | tr '[:upper:]' '[:lower:]')
+  case "$_rc_base" in
+    *.pdf|*.svg) return 0 ;;
+  esac
+  return 1
+}
+
+augment_with_file_read() {
+  _body="$1"
+  # Only when Cursor sent no content of its own. Anything non-empty means the
+  # payload already carries the file and this must not fire. `jq`'s `//` treats
+  # "" as absent, and the fallback scan yields "" for `"content":""`, so both
+  # branches agree on the empty case.
+  _rc_content="$(_json_string_field "$_body" '.content' content)"
+  [ -z "$_rc_content" ] || { printf '%s' "$_body"; return; }
+
+  _rc_fp="$(_json_string_field "$_body" '.file_path // .tool_input.file_path' file_path)"
+  # Absolute paths only — a relative path would resolve against the hook's cwd.
+  case "$_rc_fp" in /*) : ;; *) printf '%s' "$_body"; return ;; esac
+  # A backslash means the fallback scan did not unescape the value (see
+  # _json_string_field). Same deliberate divergence from hook.ps1 as the pre-image.
+  case "$_rc_fp" in *\\*) printf '%s' "$_body"; return ;; esac
+  _is_read_capture_path "$_rc_fp" || { printf '%s' "$_body"; return; }
+
+  { [ -f "$_rc_fp" ] && [ -r "$_rc_fp" ]; } || { printf '%s' "$_body"; return; }
+  _rc_sz=$(wc -c < "$_rc_fp" 2>/dev/null | tr -d ' ')
+  case "$_rc_sz" in ''|*[!0-9]*) printf '%s' "$_body"; return ;; esac
+  [ "$_rc_sz" -gt 0 ] || { printf '%s' "$_body"; return; }
+  if [ "$_rc_sz" -gt "$READ_CAPTURE_MAX_BYTES" ]; then
+    dbg "read capture $_rc_sz B -> truncating to $READ_CAPTURE_MAX_BYTES"
+  fi
+  _rc_b64=$(head -c "$READ_CAPTURE_MAX_BYTES" "$_rc_fp" 2>/dev/null | base64 2>/dev/null | tr -d '\r\n')
+  [ -n "$_rc_b64" ] || { printf '%s' "$_body"; return; }
+  dbg "read capture attached for $_rc_fp (${#_rc_b64} b64 chars)"
+
+  # Same jq-or-string-concat duality as the pre-image: jq when it is on PATH,
+  # otherwise strip the trailing `}`, append, re-close. base64 contains no
+  # JSON-special characters, so the concat is safe.
+  if command -v jq >/dev/null 2>&1; then
+    _rc_out=$(printf '%s' "$_body" | jq -c --arg b64 "$_rc_b64" \
+      '. + {rogueFileReadB64:$b64}' 2>/dev/null)
+    case "$_rc_out" in '{'*'}') printf '%s' "$_rc_out"; return ;; esac
+  fi
+  _rc_trimmed="${_body%"${_body##*[![:space:]]}"}"
+  case "$_rc_trimmed" in *'}') : ;; *) printf '%s' "$_body"; return ;; esac
+  _rc_pre="${_rc_trimmed%\}}"
+  if [ "$_rc_pre" = "{" ]; then _rc_sep=""; else _rc_sep=","; fi
+  printf '%s%s"rogueFileReadB64":"%s"}' "$_rc_pre" "$_rc_sep" "$_rc_b64"
+}
+
 if [ "$event" = "preToolUse" ]; then
   PAYLOAD="$(augment_with_pre_image "$PAYLOAD")"
+fi
+
+if [ "$event" = "beforeReadFile" ]; then
+  PAYLOAD="$(augment_with_file_read "$PAYLOAD")"
 fi
 
 # ── POST (fail-open) ───────────────────────────────────────────────────────

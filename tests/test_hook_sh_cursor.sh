@@ -93,6 +93,14 @@ posted_body() {
 posted_field() {
   posted_body | python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1],""))' "$1"
 }
+# Is a top-level field PRESENT in the last POSTed body ('yes'/'no')? Absence
+# assertions need this rather than posted_field, which answers '' both for a key
+# that is absent and for a key whose value is the empty string - so an assertion
+# written with it cannot fail against a dispatcher that attaches an empty value,
+# which is precisely the over-firing it is meant to catch.
+posted_has_field() {
+  posted_body | python3 -c 'import json,sys; print("yes" if sys.argv[1] in json.load(sys.stdin) else "no")' "$1"
+}
 
 # Is the mock accepting connections yet? `nc -z` when nc is on PATH, otherwise a
 # python3 socket connect. python3 is already a hard dependency of this file (it
@@ -208,6 +216,109 @@ BIN_FILE="$(mktemp -d)/x.png"; printf 'notreallyapng' > "$BIN_FILE"
 start_mock '{}'
 run_dispatcher preToolUse "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$BIN_FILE\",\"contents\":\"x\"}}" >/dev/null
 assert_eq "$(posted_field rogueFilePreImageB64)" "" "no pre-image for a recognized binary extension"
+stop_mock
+
+# ── Case 5: beforeReadFile with empty content attaches the file bytes ─────
+PDF_DIR="$(mktemp -d)"; PDF_FILE="$PDF_DIR/spec.pdf"
+printf '%%PDF-1.4 hello pdf bytes\n' > "$PDF_FILE"
+start_mock '{}'
+run_dispatcher beforeReadFile "{\"content\":\"\",\"file_path\":\"$PDF_FILE\",\"attachments\":[]}" >/dev/null
+assert_eq "$(posted_field rogueFileReadB64)" "$(base64 < "$PDF_FILE" | tr -d '\r\n')" \
+  "beforeReadFile with empty content attaches the pdf bytes"
+stop_mock
+
+# ── Case 6: an svg is captured too ────────────────────────────────────────
+SVG_FILE="$PDF_DIR/logo.svg"; printf '<svg><desc>hi</desc></svg>\n' > "$SVG_FILE"
+start_mock '{}'
+run_dispatcher beforeReadFile "{\"content\":\"\",\"file_path\":\"$SVG_FILE\"}" >/dev/null
+assert_eq "$(posted_field rogueFileReadB64)" "$(base64 < "$SVG_FILE" | tr -d '\r\n')" \
+  "an svg read is captured"
+stop_mock
+
+# ── Case 7: NON-empty content is left alone ──────────────────────────────
+# The fixture's extension is deliberately one the capture DOES cover: with an
+# extension it skips, the case would pass whether or not the content check exists,
+# so it would pin nothing. This way the non-empty content is the only thing that
+# can stop the capture, which is exactly the property being asserted.
+BUSY_FILE="$PDF_DIR/busy.pdf"; printf '%%PDF-1.4 already sent\n' > "$BUSY_FILE"
+start_mock '{}'
+run_dispatcher beforeReadFile "{\"content\":\"%PDF-1.4 already sent\\n\",\"file_path\":\"$BUSY_FILE\"}" >/dev/null
+assert_eq "$(posted_has_field rogueFileReadB64)" "no" \
+  "no capture when Cursor already sent content"
+stop_mock
+
+# ── Case 8: an extension outside the allowlist is left alone ─────────────
+PNG_FILE="$PDF_DIR/i.png"; printf 'pngbytes' > "$PNG_FILE"
+start_mock '{}'
+run_dispatcher beforeReadFile "{\"content\":\"\",\"file_path\":\"$PNG_FILE\"}" >/dev/null
+assert_eq "$(posted_has_field rogueFileReadB64)" "no" "no capture for an extension outside the allowlist"
+stop_mock
+
+# ── Case 9: over-cap file is TRUNCATED to the cap, not skipped ───────────
+BIG_FILE="$PDF_DIR/big.pdf"
+# 1 MiB of 'a' plus a tail that must NOT survive.
+awk 'BEGIN{while(i++<1048576)printf "a"}' > "$BIG_FILE"
+printf 'TAILMARKER' >> "$BIG_FILE"
+start_mock '{}'
+run_dispatcher beforeReadFile "{\"content\":\"\",\"file_path\":\"$BIG_FILE\"}" >/dev/null
+got="$(posted_field rogueFileReadB64)"
+assert_eq "$(printf '%s' "$got" | base64 -d 2>/dev/null | wc -c | tr -d ' ')" "1048576" \
+  "over-cap file is truncated to exactly the cap"
+assert_eq "$(printf '%s' "$got" | base64 -d 2>/dev/null | grep -c TAILMARKER || true)" "0" \
+  "bytes past the cap are not sent"
+stop_mock
+
+# ── Case 10: fail-open cases leave the body untouched ────────────────────
+start_mock '{}'
+run_dispatcher beforeReadFile "{\"content\":\"\",\"file_path\":\"$PDF_DIR/missing.pdf\"}" >/dev/null
+assert_eq "$(posted_has_field rogueFileReadB64)" "no" "a missing file attaches nothing"
+stop_mock
+start_mock '{}'
+run_dispatcher beforeReadFile '{"content":"","file_path":"relative/x.pdf"}' >/dev/null
+assert_eq "$(posted_has_field rogueFileReadB64)" "no" "a relative path attaches nothing"
+stop_mock
+start_mock '{}'
+EMPTY_PDF="$PDF_DIR/empty.pdf"; : > "$EMPTY_PDF"
+run_dispatcher beforeReadFile "{\"content\":\"\",\"file_path\":\"$EMPTY_PDF\"}" >/dev/null
+assert_eq "$(posted_has_field rogueFileReadB64)" "no" "a zero-byte file attaches nothing"
+stop_mock
+
+# ── Case 11: capture does not fire on other events ──────────────────────
+start_mock '{}'
+run_dispatcher postToolUse "{\"tool_name\":\"Read\",\"content\":\"\",\"file_path\":\"$PDF_FILE\"}" >/dev/null
+assert_eq "$(posted_has_field rogueFileReadB64)" "no" "capture is beforeReadFile-only"
+stop_mock
+
+# ── Case 12: jq path and no-jq path produce byte-identical bodies ────────
+start_mock '{}'
+run_dispatcher beforeReadFile "{\"content\":\"\",\"file_path\":\"$PDF_FILE\"}" >/dev/null
+with_jq="$(posted_body)"
+stop_mock
+start_mock '{}'
+NOJQ_DIR="$(make_nojq_path)"
+TEST_PATH="$NOJQ_DIR"
+run_dispatcher beforeReadFile "{\"content\":\"\",\"file_path\":\"$PDF_FILE\"}" >/dev/null
+without_jq="$(posted_body)"
+TEST_PATH=""
+rm -rf "$NOJQ_DIR"
+stop_mock
+# The payload is compact, so jq's reserialization is a no-op and the two bodies
+# must match byte for byte. Only ONE of these paths ever runs on a given machine,
+# which is exactly why they have to be pinned to each other here.
+assert_eq "$with_jq" "$without_jq" "jq and string-concat paths produce identical bodies"
+
+
+# ── Case 13: a backslash in the path attaches nothing ────────────────────
+# Pins a DELIBERATE divergence from hook.ps1: this dispatcher bails on any path
+# containing a backslash because its no-jq fallback scan does not unescape the
+# JSON value, while the PowerShell side does unescape and carries on. The fixture
+# file really EXISTS and its extension is in the list, so the backslash is the
+# only thing that can stop the capture - without that, the missing-file check
+# would answer for it and the case would pin nothing.
+BSLASH_FILE="$PDF_DIR/we\\ird.pdf"; printf '%%PDF-1.4 backslash\n' > "$BSLASH_FILE"
+start_mock '{}'
+run_dispatcher beforeReadFile "{\"content\":\"\",\"file_path\":\"$PDF_DIR/we\\\\ird.pdf\"}" >/dev/null
+assert_eq "$(posted_has_field rogueFileReadB64)" "no" "a backslash in the path attaches nothing"
 stop_mock
 
 echo
