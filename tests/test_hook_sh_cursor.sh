@@ -11,7 +11,10 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 HOOK="$REPO/plugins/cursor/scripts/hook.sh"
-SH="${TEST_SH:-sh}"
+# TEST_SH stays authoritative; an exported SH is honored next, so the two CI
+# lines (SH=bash / TEST_SH=dash) drive two genuinely different shells rather
+# than both landing on /bin/sh.
+SH="${TEST_SH:-${SH:-sh}}"
 
 PORT=$((RANDOM % 10000 + 30000))
 HEADERS_FILE="$(mktemp)"
@@ -91,12 +94,28 @@ posted_field() {
   posted_body | python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1],""))' "$1"
 }
 
+# Is the mock accepting connections yet? `nc -z` when nc is on PATH, otherwise a
+# python3 socket connect. python3 is already a hard dependency of this file (it
+# runs the mock server and every assertion helper) while nc is not guaranteed on
+# every image, and a missing probe binary here would fail this suite for a reason
+# that has nothing to do with the dispatcher.
+port_open() {
+  if command -v nc >/dev/null 2>&1; then
+    nc -z 127.0.0.1 "$PORT" 2>/dev/null
+  else
+    python3 -c 'import socket,sys
+s = socket.socket(); s.settimeout(0.5)
+rc = s.connect_ex(("127.0.0.1", int(sys.argv[1]))); s.close()
+sys.exit(0 if rc == 0 else 1)' "$PORT" 2>/dev/null
+  fi
+}
+
 start_mock() {
   MOCK_RESPONSE="$1" MOCK_STATUS="${2:-200}" \
     python3 "$REPO/tests/mock_server.py" "$PORT" "$HEADERS_FILE" &
   MOCK_PID=$!
   for _ in $(seq 1 50); do
-    nc -z 127.0.0.1 "$PORT" 2>/dev/null && return 0
+    port_open && return 0
     sleep 0.1
   done
   echo "mock server failed to start" >&2; exit 1
@@ -151,14 +170,30 @@ assert_header "x-rogue-actor-email" "test@example.com" "x-rogue-actor-email forw
 assert_header "x-rogue-source"      "cursor"           "x-rogue-source is cursor (cursor-only header)"
 assert_eq "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["path"])' "$HEADERS_FILE")" \
   "/api/v1/hooks/cursor" "posts to the cursor endpoint"
-stop_mock
 
 # ── Case 2: fail-open with no API key ─────────────────────────────────────
-: > "$ENV_FILE"
+# The env file for this case carries ONLY a base URL — no key, no actor vars — so
+# the dispatcher takes the unconfigured path. Naming the mock there is what makes
+# the no-request assertion below meaningful: a dispatcher that sent anything at
+# all would send it to the mock, which this case can see, rather than to the
+# built-in default host, which it could not. A blank env file leaves no base URL
+# to resolve, so the request would go somewhere unobservable and the case would
+# pass while a request was being made.
+#
+# The mock also stays UP through this case. `{}` + exit 0 alone is what a plain
+# network failure produces too, so with nothing listening those two assertions
+# could not tell a working key check from an absent one; the snapshot of the
+# mock's record is what separates them.
+printf 'export ROGUE_BASE_URL=http://127.0.0.1:%s\n' "$PORT" > "$ENV_FILE"
+SNAP="$(mktemp)"; cp "$HEADERS_FILE" "$SNAP"
 set +e; run_dispatcher preToolUse '{"tool_name":"Shell"}'; LAST_RC=$?; set -e
 assert_eq "$(cat "$OUT_FILE")" '{}' "emits {} when unconfigured"
 assert_eq "$LAST_RC" "0" "exits 0 when unconfigured"
+if cmp -s "$SNAP" "$HEADERS_FILE"; then posted="no"; else posted="yes"; fi
+rm -f "$SNAP"
+assert_eq "$posted" "no" "unconfigured sends no request (mock's record untouched)"
 write_env_file   # restore
+stop_mock
 
 # ── Case 3: existing pre-image behaviour (regression guard) ───────────────
 PRE_FILE="$(mktemp)"; printf 'flask==1.0.0\n' > "$PRE_FILE"
