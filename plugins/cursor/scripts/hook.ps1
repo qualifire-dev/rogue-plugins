@@ -444,6 +444,13 @@ function Add-FileReadBytes {
     # JSON, and its default -Depth truncates.
     param([string]$Body)
     try {
+        # NOT in lockstep with hook.sh for a WHITESPACE-ONLY content:
+        # Get-RogueJsonStringField ends its jq branch with .Trim() and the sh
+        # side's _json_string_field does not, so "content":"   " reads as empty
+        # here (the capture fires) and as non-empty there (it does not).
+        # Pre-existing helper behaviour on both sides; this gate is the first
+        # place it changes an outcome. Documented rather than fixed - changing
+        # either helper moves the pre-image's gates too.
         $content = Get-RogueJsonStringField $Body '.content' 'content'
         if ($content) { return $Body }
 
@@ -489,6 +496,16 @@ function Add-FileReadBytes {
         if (-not $b64) { return $Body }
         Dbg "read capture attached for $fp ($($b64.Length) b64 chars)"
 
+        # jq-or-concat, as in Add-FilePreImage - but for THIS field the concat
+        # half below is the one that normally runs. The base64 is passed as a
+        # single command-line argument, so past the platform's command-line
+        # limit jq cannot be launched at all: Windows caps a command line at
+        # 32,767 characters, i.e. roughly 24 KiB of file, well under this
+        # function's own 1 MiB cap (the sh sibling measures the same effect at
+        # about 96 KiB on Linux and 770 KiB on macOS). Invoke-RogueJq then
+        # yields nothing and the concat runs instead - byte-identical output
+        # either way, which the suites pin. Do not delete the concat as dead
+        # code; it is the live path for a real capture.
         $out = Invoke-RogueJq $Body @('-c', '--arg', 'b64', $b64, '. + {rogueFileReadB64:$b64}')
         if ($out -and $out.StartsWith('{') -and $out.EndsWith('}')) { return $out }
 

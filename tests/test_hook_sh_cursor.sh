@@ -28,7 +28,7 @@ cleanup() {
   rm -f "$ENV_FILE" "$HEADERS_FILE" "$OUT_FILE"
   # Fixture temp dirs/files are created as the cases run, so each needs a :- guard
   # for an exit that happens before its case. $PDF_DIR is the one that matters:
-  # Case 9's over-cap file alone is 1 MiB, so leaking it costs megabytes a run.
+  # Case 10's over-cap file alone is 1 MiB, so leaking it costs megabytes a run.
   [ -n "${PDF_DIR:-}" ] && rm -rf "$PDF_DIR" || true
   [ -n "${BIN_DIR:-}" ] && rm -rf "$BIN_DIR" || true
   [ -n "${PRE_FILE:-}" ] && rm -f "$PRE_FILE" || true
@@ -74,7 +74,7 @@ run_dispatcher() {
 # rest of the toolchain, so hiding it means rebuilding PATH as a symlink farm
 # rather than dropping a directory. A missing entry can't cause a false pass, for
 # two reasons that don't depend on how the dispatcher reacts to it: the farm build
-# below aborts the suite outright if a listed binary is not on PATH, and Case 12
+# below aborts the suite outright if a listed binary is not on PATH, and Case 13
 # asserts the no-jq run posted a request of its own before comparing bodies.
 # `wc` is in the list because the dispatcher calls `wc -c` in log rotation and in
 # both enrichment paths — without it every no-jq case fails for the wrong reason.
@@ -243,7 +243,22 @@ assert_eq "$(posted_field rogueFileReadB64)" "$(base64 < "$SVG_FILE" | tr -d '\r
   "an svg read is captured"
 stop_mock
 
-# ── Case 7: NON-empty content is left alone ──────────────────────────────
+# ── Case 7: the extension match is case-insensitive ──────────────────────
+# The dispatcher lowercases the basename before matching, and nothing else in
+# this suite exercises that: with only lowercase fixtures, deleting the `tr`
+# would leave every other case green. The match is a pure string test, so the
+# case holds on a case-insensitive filesystem too; the name is distinct from
+# Case 5's so the two fixtures cannot alias each other there. The file really
+# EXISTS and its bytes are asserted, so an uppercase extension dropping out of
+# the allowlist shows up as an absent field rather than a passing no-op.
+UPPER_FILE="$PDF_DIR/SHOUTY.PDF"; printf '%%PDF-1.4 uppercase extension\n' > "$UPPER_FILE"
+start_mock '{}'
+run_dispatcher beforeReadFile "{\"content\":\"\",\"file_path\":\"$UPPER_FILE\"}" >/dev/null
+assert_eq "$(posted_field rogueFileReadB64)" "$(base64 < "$UPPER_FILE" | tr -d '\r\n')" \
+  "an uppercase .PDF is captured (extension match is case-insensitive)"
+stop_mock
+
+# ── Case 8: NON-empty content is left alone ──────────────────────────────
 # The fixture's extension is deliberately one the capture DOES cover: with an
 # extension it skips, the case would pass whether or not the content check exists,
 # so it would pin nothing. This way the non-empty content is the only thing that
@@ -255,14 +270,14 @@ assert_eq "$(posted_has_field rogueFileReadB64)" "no" \
   "no capture when Cursor already sent content"
 stop_mock
 
-# ── Case 8: an extension outside the allowlist is left alone ─────────────
+# ── Case 9: an extension outside the allowlist is left alone ─────────────
 PNG_FILE="$PDF_DIR/i.png"; printf 'pngbytes' > "$PNG_FILE"
 start_mock '{}'
 run_dispatcher beforeReadFile "{\"content\":\"\",\"file_path\":\"$PNG_FILE\"}" >/dev/null
 assert_eq "$(posted_has_field rogueFileReadB64)" "no" "no capture for an extension outside the allowlist"
 stop_mock
 
-# ── Case 9: over-cap file is TRUNCATED to the cap, not skipped ───────────
+# ── Case 10: over-cap file is TRUNCATED to the cap, not skipped ──────────
 BIG_FILE="$PDF_DIR/big.pdf"
 # 1 MiB of 'a' plus a tail that must NOT survive.
 awk 'BEGIN{while(i++<1048576)printf "a"}' > "$BIG_FILE"
@@ -276,7 +291,7 @@ assert_eq "$(printf '%s' "$got" | base64 -d 2>/dev/null | grep -c TAILMARKER || 
   "bytes past the cap are not sent"
 stop_mock
 
-# ── Case 10: fail-open cases leave the body untouched ────────────────────
+# ── Case 11: fail-open cases leave the body untouched ────────────────────
 start_mock '{}'
 run_dispatcher beforeReadFile "{\"content\":\"\",\"file_path\":\"$PDF_DIR/missing.pdf\"}" >/dev/null
 assert_eq "$(posted_has_field rogueFileReadB64)" "no" "a missing file attaches nothing"
@@ -291,13 +306,13 @@ run_dispatcher beforeReadFile "{\"content\":\"\",\"file_path\":\"$EMPTY_PDF\"}" 
 assert_eq "$(posted_has_field rogueFileReadB64)" "no" "a zero-byte file attaches nothing"
 stop_mock
 
-# ── Case 11: capture does not fire on other events ──────────────────────
+# ── Case 12: capture does not fire on other events ──────────────────────
 start_mock '{}'
 run_dispatcher postToolUse "{\"tool_name\":\"Read\",\"content\":\"\",\"file_path\":\"$PDF_FILE\"}" >/dev/null
 assert_eq "$(posted_has_field rogueFileReadB64)" "no" "capture is beforeReadFile-only"
 stop_mock
 
-# ── Case 12: jq path and no-jq path produce byte-identical bodies ────────
+# ── Case 13: jq path and no-jq path produce byte-identical bodies ────────
 start_mock '{}'
 run_dispatcher beforeReadFile "{\"content\":\"\",\"file_path\":\"$PDF_FILE\"}" >/dev/null
 with_jq="$(posted_body)"
@@ -322,7 +337,7 @@ without_jq="$(posted_body)"
 # which is exactly why they have to be pinned to each other here.
 assert_eq "$with_jq" "$without_jq" "jq and string-concat paths produce identical bodies"
 
-# ── Case 13: a backslash in the path attaches nothing ────────────────────
+# ── Case 14: a backslash in the path attaches nothing ────────────────────
 # Pins a DELIBERATE divergence from hook.ps1: this dispatcher bails on any path
 # containing a backslash because its no-jq fallback scan does not unescape the
 # JSON value, while the PowerShell side does unescape and carries on. The fixture
