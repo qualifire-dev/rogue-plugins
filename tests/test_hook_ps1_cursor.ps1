@@ -48,10 +48,12 @@ $pdf = Join-Path $dir 'spec.pdf'
 [System.IO.File]::WriteAllBytes($pdf, [byte[]](0x25,0x50,0x44,0x46,0x2D,0x31,0x2E,0x34))
 $expected = [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($pdf))
 
-$body = '{"content":"","file_path":"' + $pdf.Replace('\','\\') + '"}'
-$out = Add-FileReadBytes $body
-Assert-Eq ($out -match '"rogueFileReadB64":"([^"]*)"') $true 'field is added'
-Assert-Eq $Matches[1] $expected 'attached bytes are the file base64'
+$esc = $pdf.Replace('\','\\')
+$body = '{"content":"","file_path":"' + $esc + '"}'
+# The WHOLE body, not just the new field: a filter that dropped `content` or
+# `file_path` while still appending would pass a field-only assertion.
+$expectedBody = '{"content":"","file_path":"' + $esc + '","rogueFileReadB64":"' + $expected + '"}'
+Assert-Eq (Add-FileReadBytes $body) $expectedBody 'the field is appended and the rest of the body survives'
 
 $busy = '{"content":"already here","file_path":"' + $pdf.Replace('\','\\') + '"}'
 Assert-Eq (Add-FileReadBytes $busy) $busy 'non-empty content leaves the body untouched'
@@ -72,15 +74,73 @@ Assert-Eq (Add-FileReadBytes $emptyBody) $emptyBody 'a zero-byte file leaves the
 $rel = '{"content":"","file_path":"relative/x.pdf"}'
 Assert-Eq (Add-FileReadBytes $rel) $rel 'a relative path leaves the body untouched'
 
+# ── jq path == concat path ─────────────────────────────────────────────────
+# jq is used when it is on PATH and the string concat otherwise. Only one runs
+# on a given machine, and the untested one is the one that matters most here:
+# both GitHub runner images ship jq, while a typical Windows Cursor box has
+# none and takes the concat path exclusively. So force it by emptying PATH,
+# assert the documented bytes, then assert the two agree byte for byte.
+# Lockstep with tests/test_hook_sh_cursor.sh's jq-vs-concat case.
+function Invoke-WithoutJq {
+    # Parameter deliberately NOT named $Body: `& $sb` resolves the scriptblock's
+    # free variables against THIS scope first, so a $Body parameter here would
+    # shadow the caller's $body and the scriptblock would silently pass itself.
+    param([scriptblock]$Action)
+    $rogueSavedPath = $env:PATH
+    try { $env:PATH = ''; & $Action } finally { $env:PATH = $rogueSavedPath }
+}
+Assert-Eq (Invoke-WithoutJq { Get-Command jq -ErrorAction SilentlyContinue }) $null `
+    'emptying PATH really does hide jq'
+
+$concat = Invoke-WithoutJq { Add-FileReadBytes $body }
+Assert-Eq $concat $expectedBody 'concat path (no jq on PATH) emits the documented bytes'
+
+# Exactly ONE closing brace is stripped: TrimEnd would eat both and corrupt a
+# body whose last value is a nested object.
+$nested = '{"content":"","file_path":"' + $esc + '","meta":{"a":1}}'
+$nestedExpected = '{"content":"","file_path":"' + $esc + '","meta":{"a":1},"rogueFileReadB64":"' + $expected + '"}'
+$nestedConcat = Invoke-WithoutJq { Add-FileReadBytes $nested }
+Assert-Eq $nestedConcat $nestedExpected 'concat path keeps a nested object at the end of the body'
+
+# Trailing whitespace is trimmed first so the strip lands on the real brace.
+$trailing = $body + "`n  "
+$trailingConcat = Invoke-WithoutJq { Add-FileReadBytes $trailing }
+Assert-Eq $trailingConcat $expectedBody 'concat path trims trailing whitespace before the brace strip'
+
+# A body the concat path cannot safely close is left alone.
+Assert-Eq (Invoke-WithoutJq { Add-FileReadBytes 'not json at all' }) 'not json at all' `
+    'concat path leaves a body with no closing brace alone'
+
+if (Get-Command jq -ErrorAction SilentlyContinue) {
+    Assert-Eq (Add-FileReadBytes $body)   $concat       'jq and concat agree byte for byte'
+    Assert-Eq (Add-FileReadBytes $nested) $nestedConcat 'jq and concat agree on a nested-object body'
+} else {
+    Write-Host '  skip: jq not installed - jq path not exercised'
+}
+# Note: the empty-object separator branch (no comma when the body is just
+# braces) is unreachable from this function - such a body carries no file_path
+# and returns at the second gate. It is kept for lockstep with Add-FilePreImage
+# and hook.sh, where the same branch IS reachable.
+
 # ── Truncation at the cap ────────────────────────────────────────────────
 $big = Join-Path $dir 'big.pdf'
 $bytes = New-Object byte[] (1048576 + 10)
 for ($i = 0; $i -lt $bytes.Length; $i++) { $bytes[$i] = 0x61 }
+# Distinguishable ends. With a uniform fill, an implementation that read the
+# LAST 1 MiB would pass a length-only assertion identically.
+$bytes[0] = 0x02
+$bytes[$bytes.Length - 1] = 0x03
 [System.IO.File]::WriteAllBytes($big, $bytes)
 $bigBody = '{"content":"","file_path":"' + $big.Replace('\','\\') + '"}'
 $bigOut = Add-FileReadBytes $bigBody
-$null = $bigOut -match '"rogueFileReadB64":"([^"]*)"'
-Assert-Eq ([Convert]::FromBase64String($Matches[1]).Length) 1048576 'over-cap file is truncated to the cap'
+# A local match, not the ambient $Matches: a failed -match would otherwise
+# leave the previous case's capture in place and these assertions would read it.
+$bigMatch = [regex]::Match($bigOut, '"rogueFileReadB64":"([^"]*)"')
+Assert-Eq $bigMatch.Success $true 'over-cap file still attaches a field'
+$bigDecoded = [Convert]::FromBase64String($bigMatch.Groups[1].Value)
+Assert-Eq $bigDecoded.Length 1048576 'over-cap file is truncated to the cap'
+Assert-Eq $bigDecoded[0] ([byte]0x02) 'the truncation keeps the FIRST bytes (a prefix, not the tail)'
+Assert-Eq $bigDecoded[$bigDecoded.Length - 1] ([byte]0x61) 'the file last byte is not in the prefix'
 
 # ── The cap constant matches hook.sh ────────────────────────────────────
 Assert-Eq $RogueFileReadMaxBytes 1048576 'cap constant is 1 MiB'
