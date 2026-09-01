@@ -422,6 +422,88 @@ function Add-FilePreImage {
     }
 }
 
+# ── File read capture (beforeReadFile only) — lockstep with hook.sh ────────
+# Cursor sends `beforeReadFile` with an EMPTY `content` for some file types. When
+# that happens the file's own bytes are attached as `rogueFileReadB64`, so the
+# request carries the file rather than only its path. A file over the cap is
+# TRUNCATED to the cap rather than skipped. Every failure path returns the body
+# unchanged.
+$RogueFileReadMaxBytes = 1048576
+
+function Test-RogueReadCapturePath {
+    param([string]$Path)
+    if (-not $Path) { return $false }
+    $ext = [System.IO.Path]::GetExtension($Path)
+    if (-not $ext) { return $false }
+    return @('.pdf', '.svg') -contains $ext.ToLowerInvariant()
+}
+
+function Add-FileReadBytes {
+    # Deliberately NOT ConvertTo-Json on the whole payload, for the same reason
+    # as Add-FilePreImage: a full parse and reserialize could alter the vendor's
+    # JSON, and its default -Depth truncates.
+    param([string]$Body)
+    try {
+        $content = Get-RogueJsonStringField $Body '.content' 'content'
+        if ($content) { return $Body }
+
+        $fp = Get-RogueJsonStringField $Body '.file_path // .tool_input.file_path' 'file_path'
+        if (-not $fp) { return $Body }
+        # Rooted paths only: a relative path would resolve against the hook's cwd.
+        # Looser than Add-FilePreImage's Windows-shaped test on purpose, and NOT a
+        # lockstep slip: an over-matching path here just falls through to the
+        # Test-Path check below and attaches nothing, whereas over-matching in the
+        # pre-image would report a real file as absent. Do not "align" the two.
+        if (-not [System.IO.Path]::IsPathRooted($fp)) { return $Body }
+        if (-not (Test-RogueReadCapturePath $fp)) { return $Body }
+        if (-not (Test-Path -LiteralPath $fp -PathType Leaf)) { return $Body }
+
+        $len = (Get-Item -LiteralPath $fp).Length
+        if ($len -le 0) { return $Body }
+        $take = [int][Math]::Min([int64]$len, [int64]$RogueFileReadMaxBytes)
+        if ($len -gt $RogueFileReadMaxBytes) {
+            Dbg "read capture $len B -> truncating to $RogueFileReadMaxBytes"
+        }
+        # Streamed rather than ReadAllBytes so an over-cap file is never fully
+        # loaded just to throw most of it away.
+        $buf = New-Object byte[] $take
+        $read = 0
+        # FileShare ReadWrite, as in Add-FilePreImage: the editor may still hold
+        # the file open. It applies with more force here, because this fires on a
+        # READ - the file is very likely open at that moment, and the default
+        # share mode would throw and lose the capture.
+        $fs = [System.IO.File]::Open($fp, 'Open', 'Read', 'ReadWrite')
+        try {
+            while ($read -lt $take) {
+                $n = $fs.Read($buf, $read, $take - $read)
+                if ($n -le 0) { break }
+                $read += $n
+            }
+        } finally { $fs.Dispose() }
+        if ($read -le 0) { return $Body }
+        # Cast back to byte[]: a PowerShell range index yields Object[], and
+        # ToBase64String takes byte[]. Windows PowerShell 5.1 is the shipping
+        # runtime for this file, so do not rely on its overload coercion.
+        if ($read -lt $take) { $buf = [byte[]]$buf[0..($read - 1)] }
+        $b64 = [Convert]::ToBase64String($buf)
+        if (-not $b64) { return $Body }
+        Dbg "read capture attached for $fp ($($b64.Length) b64 chars)"
+
+        $out = Invoke-RogueJq $Body @('-c', '--arg', 'b64', $b64, '. + {rogueFileReadB64:$b64}')
+        if ($out -and $out.StartsWith('{') -and $out.EndsWith('}')) { return $out }
+
+        $trimmed = $Body.TrimEnd()
+        if (-not $trimmed.EndsWith('}')) { return $Body }
+        $p = $trimmed.Substring(0, $trimmed.Length - 1)
+        $sep = ','
+        if ($p -eq '{') { $sep = '' }
+        return $p + $sep + '"rogueFileReadB64":"' + $b64 + '"}'
+    } catch {
+        Dbg "read capture failed: $($_.Exception.Message)"
+        return $Body
+    }
+}
+
 # Test seam: dot-sourcing with ROGUE_PS_LIB_ONLY=1 loads the functions above
 # (e.g. ConvertFrom-ShellQuoted, Rotate-Log) without running the dispatcher.
 # Production never sets this, so the hook always runs its main body.
@@ -577,6 +659,11 @@ $payload = Repair-DoubleEncodedUtf8 $payload
 # the vendor payload. It only ever appends a field; a failure leaves the body
 # byte-identical.
 if ($EventName -eq 'preToolUse') { $payload = Add-FilePreImage $payload }
+
+# File read capture (see Add-FileReadBytes) — the other append-only enrichment.
+# Same rule: it only ever appends a field, and a failure leaves the body
+# byte-identical.
+if ($EventName -eq 'beforeReadFile') { $payload = Add-FileReadBytes $payload }
 
 # ── POST (fail-open) ───────────────────────────────────────────────────────
 $headers = @{
