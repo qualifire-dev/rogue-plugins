@@ -22,7 +22,7 @@ cleanup() {
   [ -n "${MOCK_PID:-}" ] && kill "$MOCK_PID" 2>/dev/null || true
   rm -f "$ENV_FILE" "$HEADERS_FILE" "$OUT_FILE"
   # Fixtures appear as the cases run, so each needs a :- guard for an earlier
-  # exit. Case 10's over-cap file alone is 1 MiB.
+  # exit. Case 10's over-cap fixtures are 1 MiB each, three of them.
   [ -n "${PDF_DIR:-}" ] && rm -rf "$PDF_DIR" || true
   [ -n "${BIN_DIR:-}" ] && rm -rf "$BIN_DIR" || true
   [ -n "${PRE_FILE:-}" ] && rm -f "$PRE_FILE" || true
@@ -245,18 +245,41 @@ run_dispatcher beforeReadFile "{\"content\":\"\",\"file_path\":\"$PNG_FILE\"}" >
 assert_eq "$(posted_has_field rogueFileReadB64)" "no" "no capture for an extension outside the allowlist"
 stop_mock
 
-# ── Case 10: over-cap file is TRUNCATED to the cap, not skipped ──────────
-BIG_FILE="$PDF_DIR/big.pdf"
-# 1 MiB of 'a' plus a tail that must NOT survive.
-awk 'BEGIN{while(i++<1048576)printf "a"}' > "$BIG_FILE"
-printf 'TAILMARKER' >> "$BIG_FILE"
+# ── Case 10: over-cap .pdf attaches nothing ──────────────────────────────
+BIG_PDF="$PDF_DIR/big.pdf"
+# 1 MiB of 'a' plus a tail, so the file is over the cap by a known amount.
+awk 'BEGIN{while(i++<1048576)printf "a"}' > "$BIG_PDF"
+printf 'TAILMARKER' >> "$BIG_PDF"
 start_mock '{}'
-run_dispatcher beforeReadFile "{\"content\":\"\",\"file_path\":\"$BIG_FILE\"}" >/dev/null
+run_dispatcher beforeReadFile "{\"content\":\"\",\"file_path\":\"$BIG_PDF\"}" >/dev/null
+assert_eq "$(posted_has_field rogueFileReadB64)" "no" \
+  "an over-cap .pdf attaches nothing"
+stop_mock
+
+# ── Case 10b: over-cap .svg is still TRUNCATED to the cap ────────────────
+# The other half of the split: the cap still truncates for a truncatable
+# extension, so Case 10 cannot pass by disabling the capture wholesale.
+BIG_SVG="$PDF_DIR/BIG.SVG"
+awk 'BEGIN{while(i++<1048576)printf "a"}' > "$BIG_SVG"
+printf 'TAILMARKER' >> "$BIG_SVG"
+start_mock '{}'
+run_dispatcher beforeReadFile "{\"content\":\"\",\"file_path\":\"$BIG_SVG\"}" >/dev/null
 got="$(posted_field rogueFileReadB64)"
 assert_eq "$(printf '%s' "$got" | base64 -d 2>/dev/null | wc -c | tr -d ' ')" "1048576" \
-  "over-cap file is truncated to exactly the cap"
+  "an over-cap .svg is truncated to exactly the cap"
 assert_eq "$(printf '%s' "$got" | base64 -d 2>/dev/null | grep -c TAILMARKER || true)" "0" \
   "bytes past the cap are not sent"
+stop_mock
+
+# ── Case 10c: a .pdf AT the cap is unaffected by the over-cap rule ───────
+# Case 5 already covers this with a tiny fixture; this one is exactly AT the
+# cap, where an off-by-one in the comparison (`-ge` for `-gt`) would show up.
+NEAR_PDF="$PDF_DIR/near.pdf"
+awk 'BEGIN{while(i++<1048576)printf "a"}' > "$NEAR_PDF"
+start_mock '{}'
+run_dispatcher beforeReadFile "{\"content\":\"\",\"file_path\":\"$NEAR_PDF\"}" >/dev/null
+assert_eq "$(printf '%s' "$(posted_field rogueFileReadB64)" | base64 -d 2>/dev/null | wc -c | tr -d ' ')" \
+  "1048576" "a .pdf exactly AT the cap is still sent whole"
 stop_mock
 
 # ── Case 11: fail-open cases leave the body untouched ────────────────────

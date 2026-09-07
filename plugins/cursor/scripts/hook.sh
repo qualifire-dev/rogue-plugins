@@ -376,15 +376,25 @@ augment_with_pre_image() {
 # ── File read capture (beforeReadFile only) ────────────────────────────────
 # Cursor sends `beforeReadFile` with an empty `content` for some file types.
 # Attach the file's own bytes as `rogueFileReadB64` so the request carries the
-# file and not just its path. Over the cap the bytes are truncated, not skipped
-# (the pre-image does the opposite). Every failure path returns the body
-# unchanged.
+# file and not just its path. Over the cap a truncatable type is truncated and
+# every other type is skipped, as the pre-image does. Every failure path
+# returns the body unchanged.
 READ_CAPTURE_MAX_BYTES=1048576
 
 _is_read_capture_path() {
   _rc_base=$(printf '%s' "${1##*/}" | tr '[:upper:]' '[:lower:]')
   case "$_rc_base" in
     *.pdf|*.svg) return 0 ;;
+  esac
+  return 1
+}
+
+# Extensions whose bytes stay usable when they are cut short. An over-cap file
+# NOT on this list is sent whole or not at all, as the pre-image does.
+_is_read_capture_truncatable() {
+  _rct_base=$(printf '%s' "${1##*/}" | tr '[:upper:]' '[:lower:]')
+  case "$_rct_base" in
+    *.svg) return 0 ;;
   esac
   return 1
 }
@@ -410,6 +420,10 @@ augment_with_file_read() {
   case "$_rc_sz" in ''|*[!0-9]*) printf '%s' "$_body"; return ;; esac
   [ "$_rc_sz" -gt 0 ] || { printf '%s' "$_body"; return; }
   if [ "$_rc_sz" -gt "$READ_CAPTURE_MAX_BYTES" ]; then
+    _is_read_capture_truncatable "$_rc_fp" || {
+      dbg "read capture $_rc_sz B over cap -> sending none"
+      printf '%s' "$_body"; return
+    }
     dbg "read capture $_rc_sz B -> truncating to $READ_CAPTURE_MAX_BYTES"
   fi
   _rc_b64=$(head -c "$READ_CAPTURE_MAX_BYTES" "$_rc_fp" 2>/dev/null | base64 2>/dev/null | tr -d '\r\n')
