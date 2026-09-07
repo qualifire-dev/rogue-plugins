@@ -8,7 +8,7 @@ try {
     [System.IO.File]::WriteAllText($file, 'ROGUE_TEST_VALUE=trusted')
     $unix = $PSVersionTable.PSVersion.Major -ge 6 -and -not $IsWindows
     if ($unix) { & chmod 600 $file }
-    else { $null = Protect-RogueEnvFile $file }
+    elseif (-not (Protect-RogueEnvFile $file)) { throw $script:RogueEnvProtectError }
     if (-not (Test-RogueEnvFile $file)) { throw 'owner-only env was rejected' }
     if ((Read-RogueEnvFile $file) -ne 'ROGUE_TEST_VALUE=trusted') { throw 'trusted env not read' }
     if ($unix) { & chmod 666 $file }

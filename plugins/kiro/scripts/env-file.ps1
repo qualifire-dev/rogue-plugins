@@ -42,13 +42,16 @@ function Protect-RogueEnvFile {
     param([string]$Path)
     $script:RogueEnvProtectError = ''
     try {
-        $acl = Get-Acl $Path
+        # Write only the DACL. Copying the existing owner/group can require
+        # privileges the setup subprocess does not hold on Windows 5.1.
+        $acl = New-Object System.Security.AccessControl.FileSecurity
         $acl.SetAccessRuleProtection($true, $false)
-        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-            [System.Security.Principal.WindowsIdentity]::GetCurrent().Name,
-            'FullControl', 'Allow')
+        $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+            [System.Security.Principal.WindowsIdentity]::GetCurrent().User,
+            [System.Security.AccessControl.FileSystemRights]::FullControl,
+            [System.Security.AccessControl.AccessControlType]::Allow)
         $acl.SetAccessRule($rule)
-        Set-Acl $Path $acl
+        Set-Acl -LiteralPath $Path -AclObject $acl -ErrorAction Stop
         return $true
     } catch {
         $script:RogueEnvProtectError = $_.Exception.Message
