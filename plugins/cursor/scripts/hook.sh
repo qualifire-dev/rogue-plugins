@@ -374,17 +374,11 @@ augment_with_pre_image() {
 }
 
 # ── File read capture (beforeReadFile only) ────────────────────────────────
-# Cursor sends `beforeReadFile` with an EMPTY `content` for some file types. When
-# that happens the file's own bytes are attached as `rogueFileReadB64`, so the
-# request carries the file rather than only its path.
-#
-# Unlike the pre-image, a file OVER the cap is TRUNCATED to the cap rather than
-# skipped: this field is never used as a baseline to subtract, so a prefix is
-# useful where a partial baseline would be actively wrong.
-#
-# Fail-open in every branch — a non-empty `content`, an extension outside the
-# list, a relative path, a missing or unreadable file, a zero-byte file or a read
-# error all leave the relayed body byte-identical.
+# Cursor sends `beforeReadFile` with an empty `content` for some file types.
+# Attach the file's own bytes as `rogueFileReadB64` so the request carries the
+# file and not just its path. Over the cap the bytes are truncated, not skipped
+# (the pre-image does the opposite). Every failure path returns the body
+# unchanged.
 READ_CAPTURE_MAX_BYTES=1048576
 
 _is_read_capture_path() {
@@ -397,25 +391,17 @@ _is_read_capture_path() {
 
 augment_with_file_read() {
   _body="$1"
-  # Only when Cursor sent no content of its own. Anything non-empty means the
-  # payload already carries the file and this must not fire. `jq`'s `//` treats
-  # "" as absent, and the fallback scan yields "" for `"content":""`, so both
-  # branches agree on the empty case.
-  #
-  # NOT in lockstep with hook.ps1 for a WHITESPACE-ONLY content: that side's
-  # Get-RogueJsonStringField ends its jq branch with .Trim() and this one does
-  # not, so `"content":"   "` reads as empty there (the capture fires) and as
-  # non-empty here (it does not). Pre-existing helper behaviour on both sides;
-  # this gate is the first place it changes an outcome. Documented rather than
-  # fixed — changing either helper moves the pre-image's gates too.
+  # A non-empty content means the payload already carries the file. jq's `//`
+  # and the fallback scan both yield "" for `"content":""`. hook.ps1 trims and
+  # this does not, so a whitespace-only content fires there but not here.
   _rc_content="$(_json_string_field "$_body" '.content' content)"
   [ -z "$_rc_content" ] || { printf '%s' "$_body"; return; }
 
   _rc_fp="$(_json_string_field "$_body" '.file_path // .tool_input.file_path' file_path)"
-  # Absolute paths only — a relative path would resolve against the hook's cwd.
+  # Absolute paths only; a relative one would resolve against the hook's cwd.
   case "$_rc_fp" in /*) : ;; *) printf '%s' "$_body"; return ;; esac
-  # A backslash means the fallback scan did not unescape the value (see
-  # _json_string_field). Same deliberate divergence from hook.ps1 as the pre-image.
+  # A backslash means the fallback scan did not unescape the value. hook.ps1
+  # unescapes instead, the same divergence as the pre-image.
   case "$_rc_fp" in *\\*) printf '%s' "$_body"; return ;; esac
   _is_read_capture_path "$_rc_fp" || { printf '%s' "$_body"; return; }
 
@@ -430,18 +416,11 @@ augment_with_file_read() {
   [ -n "$_rc_b64" ] || { printf '%s' "$_body"; return; }
   dbg "read capture attached for $_rc_fp (${#_rc_b64} b64 chars)"
 
-  # Same jq-or-string-concat duality as the pre-image: jq when it is on PATH,
-  # otherwise strip the trailing `}`, append, re-close. base64 contains no
-  # JSON-special characters, so the concat is safe.
-  #
-  # For THIS field the concat half is the one that normally runs. The base64 is
-  # passed as a single command-line argument, so past the platform's argv limit
-  # jq cannot be exec'd at all: measured here, it fails above ~96 KiB of file on
-  # Linux (a 128 KiB per-argument cap) and above ~770 KiB on macOS (a 1 MiB
-  # total-argv cap), i.e. below this function's own 1 MiB cap on both. A failed
-  # exec leaves `_rc_out` empty, the `case` below does not match, and the concat
-  # runs instead — byte-identical output either way, which the suites pin. Do
-  # not delete the concat as dead code; it is the live path for a real capture.
+  # jq when it is on PATH, else strip the trailing `}`, append, re-close.
+  # base64 has no JSON-special characters, so the concat is safe. The base64
+  # goes to jq as one argument, so past the platform's argv limit jq cannot be
+  # exec'd (~96 KiB of file on Linux, ~770 KiB on macOS) and the concat is what
+  # runs. It is not dead code.
   if command -v jq >/dev/null 2>&1; then
     _rc_out=$(printf '%s' "$_body" | jq -c --arg b64 "$_rc_b64" \
       '. + {rogueFileReadB64:$b64}' 2>/dev/null)

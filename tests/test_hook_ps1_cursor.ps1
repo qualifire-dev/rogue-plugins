@@ -1,28 +1,21 @@
 #!/usr/bin/env pwsh
-# tests/test_hook_ps1_cursor.ps1 — unit tests for the Cursor PowerShell
-# dispatcher's file-read capture helpers (plugins/cursor/scripts/hook.ps1).
+# Unit tests for the Cursor PowerShell dispatcher's file-read capture helpers
+# (plugins/cursor/scripts/hook.ps1). Lockstep partner of
+# tests/test_hook_sh_cursor.sh.
 #
-# Lockstep partner of tests/test_hook_sh_cursor.sh: the two dispatchers must
-# agree on the extension allowlist, the 1 MiB cap, the truncate-rather-than-skip
-# rule and every fail-open branch.
+# hooks.json loads hook.ps1 through a scriptblock wrapped in `catch { '{}' }`,
+# so an error there degrades silently into a permanent no-op for every Windows
+# Cursor user. This file is the only thing that catches that.
 #
-# These are the ONLY automated checks that ever execute this code path on the
-# Windows side: hooks.json loads hook.ps1 through a scriptblock wrapped in
-# `catch { '{}' }`, so a parse or logic error there degrades silently into a
-# permanent no-op for every Windows Cursor user.
-#
-# Run on any platform with PowerShell:  pwsh tests/test_hook_ps1_cursor.ps1
-# hook.ps1 stands down on non-Windows for its MAIN body, but this test loads
-# only its functions via the ROGUE_PS_LIB_ONLY seam, so it runs anywhere.
+# The ROGUE_PS_LIB_ONLY seam loads only the functions, so this runs anywhere.
 
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 $env:ROGUE_PS_LIB_ONLY = '1'
 . ([scriptblock]::Create((Get-Content -Raw -LiteralPath (Join-Path $repo 'plugins/cursor/scripts/hook.ps1'))))
 $env:ROGUE_PS_LIB_ONLY = $null
-# hook.ps1 sets SilentlyContinue for its own fail-open behaviour; the test
-# itself wants failures to be loud. Every helper under test guards with
-# try/catch, so this does not change what they do.
+# hook.ps1 sets SilentlyContinue for its own fail-open behaviour. The test wants
+# failures loud, and every helper here guards with try/catch anyway.
 $ErrorActionPreference = 'Stop'
 
 $script:fail = 0
@@ -50,8 +43,8 @@ $expected = [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($pdf))
 
 $esc = $pdf.Replace('\','\\')
 $body = '{"content":"","file_path":"' + $esc + '"}'
-# The WHOLE body, not just the new field: a filter that dropped `content` or
-# `file_path` while still appending would pass a field-only assertion.
+# The whole body, since a filter that dropped `content` or `file_path` while
+# still appending would pass a field-only assertion.
 $expectedBody = '{"content":"","file_path":"' + $esc + '","rogueFileReadB64":"' + $expected + '"}'
 Assert-Eq (Add-FileReadBytes $body) $expectedBody 'the field is appended and the rest of the body survives'
 
@@ -75,16 +68,13 @@ $rel = '{"content":"","file_path":"relative/x.pdf"}'
 Assert-Eq (Add-FileReadBytes $rel) $rel 'a relative path leaves the body untouched'
 
 # ── jq path == concat path ─────────────────────────────────────────────────
-# jq is used when it is on PATH and the string concat otherwise. Only one runs
-# on a given machine, and the untested one is the one that matters most here:
-# both GitHub runner images ship jq, while a typical Windows Cursor box has
-# none and takes the concat path exclusively. So force it by emptying PATH,
-# assert the documented bytes, then assert the two agree byte for byte.
-# Lockstep with tests/test_hook_sh_cursor.sh's jq-vs-concat case.
+# Only one path runs on a given machine. Both GitHub runner images ship jq,
+# while a typical Windows Cursor box has none and takes the concat path only,
+# so emptying PATH is the only way to cover it.
 function Invoke-WithoutJq {
-    # Parameter deliberately NOT named $Body: `& $sb` resolves the scriptblock's
-    # free variables against THIS scope first, so a $Body parameter here would
-    # shadow the caller's $body and the scriptblock would silently pass itself.
+    # Not named $Body: `& $Action` resolves the scriptblock's free variables
+    # against THIS scope first, so that would shadow the caller's $body and the
+    # scriptblock would pass itself.
     param([scriptblock]$Action)
     $rogueSavedPath = $env:PATH
     try { $env:PATH = ''; & $Action } finally { $env:PATH = $rogueSavedPath }
@@ -117,24 +107,23 @@ if (Get-Command jq -ErrorAction SilentlyContinue) {
 } else {
     Write-Host '  skip: jq not installed - jq path not exercised'
 }
-# Note: the empty-object separator branch (no comma when the body is just
-# braces) is unreachable from this function - such a body carries no file_path
-# and returns at the second gate. It is kept for lockstep with Add-FilePreImage
-# and hook.sh, where the same branch IS reachable.
+# The empty-object separator branch is unreachable from this function: such a
+# body carries no file_path and returns at the second gate. It stays for
+# lockstep with Add-FilePreImage and hook.sh, where it is reachable.
 
 # ── Truncation at the cap ────────────────────────────────────────────────
 $big = Join-Path $dir 'big.pdf'
 $bytes = New-Object byte[] (1048576 + 10)
 for ($i = 0; $i -lt $bytes.Length; $i++) { $bytes[$i] = 0x61 }
-# Distinguishable ends. With a uniform fill, an implementation that read the
-# LAST 1 MiB would pass a length-only assertion identically.
+# Distinguishable ends. With a uniform fill, reading the LAST 1 MiB would pass
+# a length-only assertion identically.
 $bytes[0] = 0x02
 $bytes[$bytes.Length - 1] = 0x03
 [System.IO.File]::WriteAllBytes($big, $bytes)
 $bigBody = '{"content":"","file_path":"' + $big.Replace('\','\\') + '"}'
 $bigOut = Add-FileReadBytes $bigBody
-# A local match, not the ambient $Matches: a failed -match would otherwise
-# leave the previous case's capture in place and these assertions would read it.
+# A local match, not the ambient $Matches: a failed -match would leave the
+# previous case's capture in place and these assertions would read it.
 $bigMatch = [regex]::Match($bigOut, '"rogueFileReadB64":"([^"]*)"')
 Assert-Eq $bigMatch.Success $true 'over-cap file still attaches a field'
 $bigDecoded = [Convert]::FromBase64String($bigMatch.Groups[1].Value)

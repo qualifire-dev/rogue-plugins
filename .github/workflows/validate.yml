@@ -89,12 +89,11 @@ jobs:
           [ "$fail" = 0 ] || exit 1
 
       - name: Shell unit tests
-        # Mostly the dependency-free ones; the Cursor dispatcher end-to-end suite
-        # also runs here, since the runner already has the python3 mock server and
-        # nc it needs. dash is Ubuntu's /bin/sh, i.e. what Claude Code invokes the
-        # hook with, so the actor cascade and the dispatcher are both exercised
-        # under strict POSIX. Their PowerShell twins are covered by the unit tests
-        # below.
+        # Mostly the dependency-free ones, plus the Cursor dispatcher end-to-end
+        # suite, whose python3 mock server the runner already has. dash is
+        # Ubuntu's /bin/sh, i.e. what Claude Code invokes the hook with, so the
+        # actor cascade and the dispatcher both run under strict POSIX. Their
+        # PowerShell twins are covered by the unit tests below.
         run: |
           set -euo pipefail
           TEST_SH=dash bash tests/test_actor_sh.sh

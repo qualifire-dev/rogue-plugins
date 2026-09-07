@@ -1,19 +1,14 @@
 #!/usr/bin/env bash
-# tests/test_hook_sh_cursor.sh — end-to-end for the Cursor sh dispatcher
-# (plugins/cursor/scripts/hook.sh): env file → hook.sh → mock server → stdout.
-# Holds the dispatcher to the verbatim-relay + header + fail-open contract, and
-# covers the two places it is NOT a pure relay: the preToolUse file pre-image
-# and the beforeReadFile byte capture.
+# End-to-end for the Cursor sh dispatcher (plugins/cursor/scripts/hook.sh):
+# env file, hook.sh, mock server, stdout.
 #
-# Cursor runs the `sh` command on macOS/Linux; override with TEST_SH=dash to
-# exercise strict POSIX and catch bashisms.
+# Cursor runs the `sh` command on macOS/Linux. TEST_SH=dash exercises strict
+# POSIX and catches bashisms.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 HOOK="$REPO/plugins/cursor/scripts/hook.sh"
-# TEST_SH stays authoritative; an exported SH is honored next, so the two CI
-# lines (SH=bash / TEST_SH=dash) drive two genuinely different shells rather
-# than both landing on /bin/sh.
+# TEST_SH wins, then an exported SH, so the two CI lines drive two shells.
 SH="${TEST_SH:-${SH:-sh}}"
 
 PORT=$((RANDOM % 10000 + 30000))
@@ -26,17 +21,15 @@ TEST_PATH=""
 cleanup() {
   [ -n "${MOCK_PID:-}" ] && kill "$MOCK_PID" 2>/dev/null || true
   rm -f "$ENV_FILE" "$HEADERS_FILE" "$OUT_FILE"
-  # Fixture temp dirs/files are created as the cases run, so each needs a :- guard
-  # for an exit that happens before its case. $PDF_DIR is the one that matters:
-  # Case 10's over-cap file alone is 1 MiB, so leaking it costs megabytes a run.
+  # Fixtures appear as the cases run, so each needs a :- guard for an earlier
+  # exit. Case 10's over-cap file alone is 1 MiB.
   [ -n "${PDF_DIR:-}" ] && rm -rf "$PDF_DIR" || true
   [ -n "${BIN_DIR:-}" ] && rm -rf "$BIN_DIR" || true
   [ -n "${PRE_FILE:-}" ] && rm -f "$PRE_FILE" || true
 }
 trap cleanup EXIT
 
-# Rewrite $ENV_FILE with the standard four exports, so a case that blanks it to
-# test the unconfigured path can restore it afterwards.
+# Case 2 blanks $ENV_FILE to test the unconfigured path, then restores it.
 write_env_file() {
   cat > "$ENV_FILE" <<EOF
 export ROGUE_API_KEY=test-key
@@ -47,10 +40,9 @@ EOF
 }
 write_env_file
 
-# Run with a clean HOME holding our env file. Clear ROGUE_* from the process env
-# so only the file drives resolution (process env would otherwise win). Writes
-# stdout to $OUT_FILE and RETURNS the dispatcher's exit code (so the caller can
-# assert exit 0 — command substitution would hide it in a subshell).
+# Run with a clean HOME holding our env file, and ROGUE_* cleared from the
+# process env so only the file drives resolution. Writes stdout to $OUT_FILE and
+# RETURNS the exit code; command substitution would hide it in a subshell.
 run_dispatcher() {
   local tmp_home rc
   tmp_home="$(mktemp -d)"
@@ -69,16 +61,11 @@ run_dispatcher() {
   return $rc
 }
 
-# Build a PATH that has everything the dispatcher needs EXCEPT jq, so its concat
-# fallback runs. jq (on macOS 26: /usr/bin/jq) sits in the same directory as the
-# rest of the toolchain, so hiding it means rebuilding PATH as a symlink farm
-# rather than dropping a directory. A missing entry can't cause a false pass, for
-# two reasons that don't depend on how the dispatcher reacts to it: the farm build
-# below aborts the suite outright if a listed binary is not on PATH, and Case 13
-# asserts the no-jq run posted a request of its own before comparing bodies.
-# `wc` is in the list because the dispatcher calls `wc -c` in log rotation and in
-# both enrichment paths — without it every no-jq case fails for the wrong reason.
-# Echoes the farm dir; the caller sets TEST_PATH and removes it afterwards.
+# A PATH with everything the dispatcher needs except jq, so its concat fallback
+# runs. jq sits in the same directory as the rest of the toolchain, so hiding it
+# means a symlink farm rather than dropping a directory. `wc` is listed because
+# the dispatcher calls `wc -c` in log rotation and both enrichments. Echoes the
+# farm dir; the caller sets TEST_PATH and removes it afterwards.
 make_nojq_path() {
   local d b src
   d="$(mktemp -d)"
@@ -101,20 +88,15 @@ posted_body() {
 posted_field() {
   posted_body | python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1],""))' "$1"
 }
-# Is a top-level field PRESENT in the last POSTed body ('yes'/'no')? Absence
-# assertions need this rather than posted_field, which answers '' both for a key
-# that is absent and for a key whose value is the empty string - so an assertion
-# written with it cannot fail against a dispatcher that attaches an empty value,
-# which is precisely the over-firing it is meant to catch.
+# Is a top-level field PRESENT ('yes'/'no')? Absence assertions need this:
+# posted_field answers '' both for an absent key and for an empty value, so it
+# cannot fail against a dispatcher that attaches an empty one.
 posted_has_field() {
   posted_body | python3 -c 'import json,sys; print("yes" if sys.argv[1] in json.load(sys.stdin) else "no")' "$1"
 }
 
-# Is the mock accepting connections yet? `nc -z` when nc is on PATH, otherwise a
-# python3 socket connect. python3 is already a hard dependency of this file (it
-# runs the mock server and every assertion helper) while nc is not guaranteed on
-# every image, and a missing probe binary here would fail this suite for a reason
-# that has nothing to do with the dispatcher.
+# Is the mock accepting connections yet? nc when it is on PATH, else a python3
+# socket connect. python3 is already a hard dependency here, nc is not.
 port_open() {
   if command -v nc >/dev/null 2>&1; then
     nc -z 127.0.0.1 "$PORT" 2>/dev/null
@@ -166,8 +148,7 @@ assert_no_header() {
   assert_eq "$actual" "False" "$label"
 }
 
-# Presence-only: the value is this machine's hostname / installed version, so the
-# test can assert it is sent and non-empty but not what it says.
+# Presence-only: the value is this machine's hostname or installed version.
 assert_header_present() {
   local key="$1" label="$2" actual
   actual=$(python3 -c 'import json,sys; print(bool(json.load(open(sys.argv[1]))["headers"].get(sys.argv[2])))' "$HEADERS_FILE" "$key")
@@ -188,18 +169,11 @@ assert_eq "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["pa
   "/api/v1/hooks/cursor" "posts to the cursor endpoint"
 
 # ── Case 2: fail-open with no API key ─────────────────────────────────────
-# The env file for this case carries ONLY a base URL — no key, no actor vars — so
-# the dispatcher takes the unconfigured path. Naming the mock there is what makes
-# the no-request assertion below meaningful: a dispatcher that sent anything at
-# all would send it to the mock, which this case can see, rather than to the
-# built-in default host, which it could not. A blank env file leaves no base URL
-# to resolve, so the request would go somewhere unobservable and the case would
-# pass while a request was being made.
-#
-# The mock also stays UP through this case. `{}` + exit 0 alone is what a plain
-# network failure produces too, so with nothing listening those two assertions
-# could not tell a working key check from an absent one; the snapshot of the
-# mock's record is what separates them.
+# The env file carries ONLY a base URL, so a dispatcher that sent anything would
+# send it to the mock, where this case can see it. A blank file leaves no base
+# URL and the request would go somewhere unobservable. The mock also stays up:
+# `{}` + exit 0 is what a network failure produces too, so only the snapshot
+# separates a working key check from an absent one.
 printf 'export ROGUE_BASE_URL=http://127.0.0.1:%s\n' "$PORT" > "$ENV_FILE"
 SNAP="$(mktemp)"; cp "$HEADERS_FILE" "$SNAP"
 set +e; run_dispatcher preToolUse '{"tool_name":"Shell"}'; LAST_RC=$?; set -e
@@ -244,13 +218,9 @@ assert_eq "$(posted_field rogueFileReadB64)" "$(base64 < "$SVG_FILE" | tr -d '\r
 stop_mock
 
 # ── Case 7: the extension match is case-insensitive ──────────────────────
-# The dispatcher lowercases the basename before matching, and nothing else in
-# this suite exercises that: with only lowercase fixtures, deleting the `tr`
-# would leave every other case green. The match is a pure string test, so the
-# case holds on a case-insensitive filesystem too; the name is distinct from
-# Case 5's so the two fixtures cannot alias each other there. The file really
-# EXISTS and its bytes are asserted, so an uppercase extension dropping out of
-# the allowlist shows up as an absent field rather than a passing no-op.
+# Nothing else here exercises the lowercasing: with only lowercase fixtures,
+# deleting the `tr` would leave every other case green. The name differs from
+# Case 5's so the two cannot alias on a case-insensitive filesystem.
 UPPER_FILE="$PDF_DIR/SHOUTY.PDF"; printf '%%PDF-1.4 uppercase extension\n' > "$UPPER_FILE"
 start_mock '{}'
 run_dispatcher beforeReadFile "{\"content\":\"\",\"file_path\":\"$UPPER_FILE\"}" >/dev/null
@@ -259,10 +229,8 @@ assert_eq "$(posted_field rogueFileReadB64)" "$(base64 < "$UPPER_FILE" | tr -d '
 stop_mock
 
 # ── Case 8: NON-empty content is left alone ──────────────────────────────
-# The fixture's extension is deliberately one the capture DOES cover: with an
-# extension it skips, the case would pass whether or not the content check exists,
-# so it would pin nothing. This way the non-empty content is the only thing that
-# can stop the capture, which is exactly the property being asserted.
+# The extension is one the capture covers, so the content is the only thing
+# that can stop it. With a skipped extension the case would pin nothing.
 BUSY_FILE="$PDF_DIR/busy.pdf"; printf '%%PDF-1.4 already sent\n' > "$BUSY_FILE"
 start_mock '{}'
 run_dispatcher beforeReadFile "{\"content\":\"%PDF-1.4 already sent\\n\",\"file_path\":\"$BUSY_FILE\"}" >/dev/null
@@ -320,10 +288,8 @@ stop_mock
 start_mock '{}'
 NOJQ_DIR="$(make_nojq_path)"
 TEST_PATH="$NOJQ_DIR"
-# The mock rewrites $HEADERS_FILE only when a request actually lands, and nothing
-# else truncates it, so a no-jq run that posted NOTHING would leave the jq run's
-# own record in place and the comparison below would match that record against
-# itself. Truncating first, plus the guard, turns that into a named failure.
+# The mock rewrites $HEADERS_FILE only when a request lands, so a no-jq run that
+# posted nothing would leave the jq run's record and match it against itself.
 : > "$HEADERS_FILE"
 run_dispatcher beforeReadFile "{\"content\":\"\",\"file_path\":\"$PDF_FILE\"}" >/dev/null
 TEST_PATH=""
@@ -332,18 +298,14 @@ stop_mock
 if [ -s "$HEADERS_FILE" ]; then nojq_posted="yes"; else nojq_posted="no"; fi
 assert_eq "$nojq_posted" "yes" "the no-jq run posts a request of its own"
 without_jq="$(posted_body)"
-# The payload is compact, so jq's reserialization is a no-op and the two bodies
-# must match byte for byte. Only ONE of these paths ever runs on a given machine,
-# which is exactly why they have to be pinned to each other here.
+# The payload is compact, so jq's reserialization is a no-op. Only one path ever
+# runs on a given machine, which is why they are pinned to each other here.
 assert_eq "$with_jq" "$without_jq" "jq and string-concat paths produce identical bodies"
 
 # ── Case 14: a backslash in the path attaches nothing ────────────────────
-# Pins a DELIBERATE divergence from hook.ps1: this dispatcher bails on any path
-# containing a backslash because its no-jq fallback scan does not unescape the
-# JSON value, while the PowerShell side does unescape and carries on. The fixture
-# file really EXISTS and its extension is in the list, so the backslash is the
-# only thing that can stop the capture - without that, the missing-file check
-# would answer for it and the case would pin nothing.
+# A deliberate divergence from hook.ps1, which unescapes and carries on. The
+# fixture exists and its extension is in the list, so the backslash is the only
+# thing that can stop the capture.
 BSLASH_FILE="$PDF_DIR/we\\ird.pdf"; printf '%%PDF-1.4 backslash\n' > "$BSLASH_FILE"
 start_mock '{}'
 run_dispatcher beforeReadFile "{\"content\":\"\",\"file_path\":\"$PDF_DIR/we\\\\ird.pdf\"}" >/dev/null

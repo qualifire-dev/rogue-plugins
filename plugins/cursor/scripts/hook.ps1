@@ -422,11 +422,11 @@ function Add-FilePreImage {
     }
 }
 
-# ── File read capture (beforeReadFile only) — lockstep with hook.sh ────────
-# Cursor sends `beforeReadFile` with an EMPTY `content` for some file types. When
-# that happens the file's own bytes are attached as `rogueFileReadB64`, so the
-# request carries the file rather than only its path. A file over the cap is
-# TRUNCATED to the cap rather than skipped. Every failure path returns the body
+# ── File read capture (beforeReadFile only), lockstep with hook.sh ─────────
+# Cursor sends `beforeReadFile` with an empty `content` for some file types.
+# Attach the file's own bytes as `rogueFileReadB64` so the request carries the
+# file and not just its path. Over the cap the bytes are truncated, not skipped
+# (the pre-image does the opposite). Every failure path returns the body
 # unchanged.
 $RogueFileReadMaxBytes = 1048576
 
@@ -439,28 +439,21 @@ function Test-RogueReadCapturePath {
 }
 
 function Add-FileReadBytes {
-    # Deliberately NOT ConvertTo-Json on the whole payload, for the same reason
-    # as Add-FilePreImage: a full parse and reserialize could alter the vendor's
-    # JSON, and its default -Depth truncates.
+    # No ConvertTo-Json on the whole payload, as in Add-FilePreImage: a parse
+    # and reserialize could alter the vendor's JSON, and -Depth truncates.
     param([string]$Body)
     try {
-        # NOT in lockstep with hook.sh for a WHITESPACE-ONLY content:
-        # Get-RogueJsonStringField ends its jq branch with .Trim() and the sh
-        # side's _json_string_field does not, so "content":"   " reads as empty
-        # here (the capture fires) and as non-empty there (it does not).
-        # Pre-existing helper behaviour on both sides; this gate is the first
-        # place it changes an outcome. Documented rather than fixed - changing
-        # either helper moves the pre-image's gates too.
+        # Get-RogueJsonStringField trims and the sh side's _json_string_field
+        # does not, so a whitespace-only content fires here but not there.
         $content = Get-RogueJsonStringField $Body '.content' 'content'
         if ($content) { return $Body }
 
         $fp = Get-RogueJsonStringField $Body '.file_path // .tool_input.file_path' 'file_path'
         if (-not $fp) { return $Body }
-        # Rooted paths only: a relative path would resolve against the hook's cwd.
-        # Looser than Add-FilePreImage's Windows-shaped test on purpose, and NOT a
-        # lockstep slip: an over-matching path here just falls through to the
-        # Test-Path check below and attaches nothing, whereas over-matching in the
-        # pre-image would report a real file as absent. Do not "align" the two.
+        # Rooted paths only; a relative one would resolve against the hook's cwd.
+        # Looser than Add-FilePreImage's Windows-shaped test on purpose: an
+        # over-matching path here falls through to Test-Path and attaches
+        # nothing, where the pre-image would report a real file as absent.
         if (-not [System.IO.Path]::IsPathRooted($fp)) { return $Body }
         if (-not (Test-RogueReadCapturePath $fp)) { return $Body }
         if (-not (Test-Path -LiteralPath $fp -PathType Leaf)) { return $Body }
@@ -471,14 +464,13 @@ function Add-FileReadBytes {
         if ($len -gt $RogueFileReadMaxBytes) {
             Dbg "read capture $len B -> truncating to $RogueFileReadMaxBytes"
         }
-        # Streamed rather than ReadAllBytes so an over-cap file is never fully
-        # loaded just to throw most of it away.
+        # Streamed rather than ReadAllBytes so an over-cap file is not fully
+        # loaded just to discard most of it.
         $buf = New-Object byte[] $take
         $read = 0
-        # FileShare ReadWrite, as in Add-FilePreImage: the editor may still hold
-        # the file open. It applies with more force here, because this fires on a
-        # READ - the file is very likely open at that moment, and the default
-        # share mode would throw and lose the capture.
+        # FileShare ReadWrite, as in Add-FilePreImage. This fires on a READ, so
+        # the editor is very likely holding the file and the default share mode
+        # would throw and lose the capture.
         $fs = [System.IO.File]::Open($fp, 'Open', 'Read', 'ReadWrite')
         try {
             while ($read -lt $take) {
@@ -488,24 +480,17 @@ function Add-FileReadBytes {
             }
         } finally { $fs.Dispose() }
         if ($read -le 0) { return $Body }
-        # Cast back to byte[]: a PowerShell range index yields Object[], and
-        # ToBase64String takes byte[]. Windows PowerShell 5.1 is the shipping
-        # runtime for this file, so do not rely on its overload coercion.
+        # A range index yields Object[] and ToBase64String takes byte[]. Cast
+        # rather than rely on coercion, since 5.1 is the shipping runtime.
         if ($read -lt $take) { $buf = [byte[]]$buf[0..($read - 1)] }
         $b64 = [Convert]::ToBase64String($buf)
         if (-not $b64) { return $Body }
         Dbg "read capture attached for $fp ($($b64.Length) b64 chars)"
 
-        # jq-or-concat, as in Add-FilePreImage - but for THIS field the concat
-        # half below is the one that normally runs. The base64 is passed as a
-        # single command-line argument, so past the platform's command-line
-        # limit jq cannot be launched at all: Windows caps a command line at
-        # 32,767 characters, i.e. roughly 24 KiB of file, well under this
-        # function's own 1 MiB cap (the sh sibling measures the same effect at
-        # about 96 KiB on Linux and 770 KiB on macOS). Invoke-RogueJq then
-        # yields nothing and the concat runs instead - byte-identical output
-        # either way, which the suites pin. Do not delete the concat as dead
-        # code; it is the live path for a real capture.
+        # jq-or-concat, as in Add-FilePreImage. The base64 goes to jq as one
+        # argument, and Windows caps a command line at 32,767 characters
+        # (~24 KiB of file), so Invoke-RogueJq yields nothing and the concat
+        # below is what runs. It is not dead code.
         $out = Invoke-RogueJq $Body @('-c', '--arg', 'b64', $b64, '. + {rogueFileReadB64:$b64}')
         if ($out -and $out.StartsWith('{') -and $out.EndsWith('}')) { return $out }
 
@@ -672,14 +657,9 @@ $payload = $payload.TrimStart([char]0xFEFF)
 # which happens on clients with a non-UTF-8 Windows locale (out of our control).
 $payload = Repair-DoubleEncodedUtf8 $payload
 
-# File pre-image (see Add-FilePreImage) — the one place this dispatcher adds to
-# the vendor payload. It only ever appends a field; a failure leaves the body
-# byte-identical.
+# The two places this dispatcher adds to the vendor payload. Both only ever
+# append a field; a failure leaves the body byte-identical.
 if ($EventName -eq 'preToolUse') { $payload = Add-FilePreImage $payload }
-
-# File read capture (see Add-FileReadBytes) — the other append-only enrichment.
-# Same rule: it only ever appends a field, and a failure leaves the body
-# byte-identical.
 if ($EventName -eq 'beforeReadFile') { $payload = Add-FileReadBytes $payload }
 
 # ── POST (fail-open) ───────────────────────────────────────────────────────
