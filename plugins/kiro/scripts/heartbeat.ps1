@@ -110,9 +110,10 @@ function Get-BeaconLibrary {
 # ── credential resolution ──────────────────────────────────────────────────
 function Import-Credentials {
     $script:creds = @{}
+    . ([scriptblock]::Create((Get-Content -Raw -LiteralPath (Join-Path $PluginRoot 'scripts/env-file.ps1'))))
     foreach ($f in @((Join-Path $pluginRoot 'env'), 'C:\ProgramData\rogue\env', (Join-Path $env:USERPROFILE '.rogue-env'))) {
         if (-not $f -or -not (Test-Path -LiteralPath $f)) { continue }
-        foreach ($line in (Get-Content -LiteralPath $f)) {
+        foreach ($line in (Read-RogueEnvFile $f)) {
             if ($line -match '^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)=(.+)$') {
                 $script:creds[$Matches[1]] = ConvertFrom-ShellQuoted ($Matches[2].Trim())
             }

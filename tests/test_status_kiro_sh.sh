@@ -30,7 +30,7 @@ assert_lacks() { case "$2" in *"$1"*) bad "$3" "found <$1>, which must not appea
 # developer's machine is never consulted and "kiro-cli absent" is a real case.
 BIN="$WORK/bin"; FARM="$WORK/farm"; mkdir -p "$BIN" "$FARM"
 for b in sh bash dash dirname basename date mkdir cat sed grep tr tail head awk wc hostname \
-         cp rm mv chmod find mktemp uname env printf ls touch sort defaults; do
+         cp rm mv chmod find mktemp uname env printf ls touch sort defaults stat id od; do
   src="$(command -v "$b" 2>/dev/null || true)"
   [ -n "$src" ] && ln -s "$src" "$FARM/$(basename "$src")" 2>/dev/null
 done
@@ -95,7 +95,7 @@ JSON
 # Called directly, never inside $( ), so the three results survive.
 run_status() {
   : > "$H/curl.log"
-  ( cd "$H/ws" && env -i HOME="$H" PATH="${1:-$BIN:$FARM}" CURL_LOG="$H/curl.log" \
+  ( cd "${STATUS_CWD:-$H/ws}" && env -i HOME="$H" PATH="${1:-$BIN:$FARM}" CURL_LOG="$H/curl.log" \
       ROGUE_KIRO_APP="${ROGUE_KIRO_APP:-$WORK/no-app}" KIRO_FAKE_DEFAULT="${KIRO_FAKE_DEFAULT:-}" \
       FAKE_BODY="${FAKE_BODY:-}" FAKE_CODE="${FAKE_CODE:-200}" \
       "$SH" "$PLUGIN/scripts/status.sh" ) > "$H/out" 2>&1
@@ -147,7 +147,7 @@ echo "── the body is the heartbeat's, byte for byte ────────
 # install - which is why kiro-host.sh holds the one builder both call.
 status_json=$(grep -o '{"agent_family.*}' "$H/curl.log" | head -n1)
 : > "$H/curl.log"
-( cd "$H/ws" && env -i HOME="$H" PATH="$BIN:$FARM" CURL_LOG="$H/curl.log" \
+( cd "${STATUS_CWD:-$H/ws}" && env -i HOME="$H" PATH="$BIN:$FARM" CURL_LOG="$H/curl.log" \
     ROGUE_KIRO_APP="$APP" KIRO_FAKE_DEFAULT=rogue \
     "$SH" "$PLUGIN/scripts/heartbeat.sh" kiro_cli SessionStart ) >/dev/null 2>&1
 heartbeat_json=$(grep -o '{"agent_family.*}' "$H/curl.log" | head -n1)
@@ -196,6 +196,7 @@ new_home offline; wire_kiro
 FAKE_BODY='' FAKE_CODE=000 run_status
 assert_has 'HTTP 000'                          "$out" "reports curl's 000"
 assert_has 'network'                           "$out" "explains 000 as a network problem"
+[ "$RC" != 0 ] && ok "exits non-zero on a transport failure" || bad "exits non-zero on a transport failure" "rc=0"
 
 echo "── kiro-cli absent, IDE present: the row keys on the IDE ────────────────"
 new_home ideonly; wire_kiro
@@ -205,6 +206,18 @@ assert_has 'kiro_cli    kiro-cli not found'    "$out" "reports the CLI absent"
 assert_has '"agent":"kiro_ide"'                "$CURLS" "body keys the IDE surface"
 assert_has '"agent_version":"1.0.437"'         "$CURLS" "body carries the IDE build"
 assert_has 'default agent (2.x engine)             (kiro-cli not found)' "$out" "no CLI means no default to report"
+
+new_home same-directory; wire_kiro
+STATUS_CWD="$H" FAKE_BODY='{"ok":true}' run_status
+assert_has 'agent configs with Rogue hooks         1' "$out" "home workspace is counted once"
+
+# Exercise the real body builder with characters that must be JSON-escaped.
+body=$(env -i PATH="$PATH" SURFACE=kiro_ide ROGUE_KIRO_APP="$WORK/no-app" \
+  ROGUE_ACTOR_NAME="$(printf 'Test\tName\n\001')" \
+  sh -c '. "$1"; rogue_kiro_status_body' sh "$PLUGIN/scripts/kiro-host.sh")
+if printf '%s' "$body" | python3 -c 'import json,sys; assert json.load(sys.stdin)["actor_name"] == "Test\tName\n\x01"'; then
+  ok "body builder preserves JSON control characters"
+else bad "body builder preserves JSON control characters" "invalid or changed JSON"; fi
 
 echo ""
 if [ "$fails" = 0 ]; then echo "kiro status.sh: all checks passed"; else echo "kiro status.sh: $fails failure(s)"; exit 1; fi

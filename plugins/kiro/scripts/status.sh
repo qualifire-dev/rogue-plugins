@@ -37,9 +37,11 @@ json_str() { printf '%s' "$2" | sed -nE 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"(
 
 # ── credentials (same precedence as hook.sh: bundled → MDM → per-user) ──────
 load_env() {
-  [ -r "${PLUGIN_ROOT}/env" ] && . "${PLUGIN_ROOT}/env"
-  [ -r /etc/rogue/env ]       && . /etc/rogue/env
-  [ -r "$HOME/.rogue-env" ]   && . "$HOME/.rogue-env"
+  [ -r "${PLUGIN_ROOT}/scripts/env-file.sh" ] || return 0
+  . "${PLUGIN_ROOT}/scripts/env-file.sh"
+  rogue_source_env "${PLUGIN_ROOT}/env"
+  rogue_source_env /etc/rogue/env
+  rogue_source_env "$HOME/.rogue-env"
   ROGUE_BASE_URL="${ROGUE_BASE_URL:-https://api.rogue.security}"
   ROGUE_BASE_URL="${ROGUE_BASE_URL%/}"
   return 0
@@ -98,8 +100,15 @@ agent_carries_hooks() { grep -q '"rogue-preToolUse"' "$1" 2>/dev/null; }
 
 hooked_agent_count() {
   n=0
-  for f in "$HOME"/.kiro/agents/*.json ./.kiro/agents/*.json; do
-    agent_carries_hooks "$f" && n=$((n + 1))
+  seen=""
+  for dir in "$HOME/.kiro/agents" ./.kiro/agents; do
+    [ -d "$dir" ] || continue
+    resolved=$(CDPATH= cd -- "$dir" && pwd -P) || continue
+    [ "$resolved" = "$seen" ] && continue
+    seen="$resolved"
+    for f in "$resolved"/*.json; do
+      agent_carries_hooks "$f" && n=$((n + 1))
+    done
   done
   echo "$n"
 }

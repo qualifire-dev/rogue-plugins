@@ -39,9 +39,11 @@ locate_plugin_root() {
 
 # Same env precedence as hook.sh (later wins): bundled → MDM → per-user.
 load_env() {
-  [ -r "${PLUGIN_ROOT}/env" ] && . "${PLUGIN_ROOT}/env"
-  [ -r /etc/rogue/env ]       && . /etc/rogue/env
-  [ -r "$HOME/.rogue-env" ]   && . "$HOME/.rogue-env"
+  [ -r "${PLUGIN_ROOT}/scripts/env-file.sh" ] || return 0
+  . "${PLUGIN_ROOT}/scripts/env-file.sh"
+  rogue_source_env "${PLUGIN_ROOT}/env"
+  rogue_source_env /etc/rogue/env
+  rogue_source_env "$HOME/.rogue-env"
   # Trim a trailing slash so a user-set ROGUE_BASE_URL with one doesn't yield
   # "//" in the composed URL (mirrors heartbeat.ps1's .TrimEnd('/')).
   ROGUE_BASE_URL="${ROGUE_BASE_URL:-}"

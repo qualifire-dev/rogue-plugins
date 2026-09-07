@@ -223,7 +223,7 @@ KIRO_HOME="$TMPROOT/kiro-home"
 mkdir -p "$KIRO_ROOT/scripts" "$KIRO_HOME" "$TMPROOT/kiro-bin"
 cp "$REPO/plugins/kiro/scripts/heartbeat.sh" "$REPO/plugins/kiro/scripts/beacon.sh" \
    "$REPO/plugins/kiro/scripts/actor.sh" "$REPO/plugins/kiro/scripts/install-id.sh" \
-   "$REPO/plugins/kiro/scripts/kiro-host.sh" "$KIRO_ROOT/scripts/"
+   "$REPO/plugins/kiro/scripts/kiro-host.sh" "$REPO/plugins/kiro/scripts/env-file.sh" "$KIRO_ROOT/scripts/"
 echo '{"name":"rogue","version":"9.9.9"}' > "$KIRO_ROOT/plugin.json"
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$SB_CALLS"\nexit 0\n' > "$TMPROOT/kiro-bin/curl"
 chmod +x "$TMPROOT/kiro-bin/curl"

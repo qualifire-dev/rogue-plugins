@@ -1,3 +1,38 @@
+# Reject files writable by identities other than the current user or Windows
+# administrators/system. System-wide configuration cannot be user-owned.
+function Test-RogueEnvFile {
+    param([string]$Path, [switch]$System)
+    try {
+        if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+        if ($PSVersionTable.PSVersion.Major -ge 6 -and -not $IsWindows) {
+            $info = & stat -Lc '%u %a' $Path 2>$null
+            if ($LASTEXITCODE -ne 0) { $info = & stat -Lf '%u %Lp' $Path 2>$null }
+            if ($LASTEXITCODE -ne 0 -or $info -notmatch '^(\d+) ([0-7]+)$') { return $false }
+            $ownerId = $Matches[1]; $mode = [Convert]::ToInt32($Matches[2], 8)
+            return (($ownerId -eq '0' -or (-not $System -and $ownerId -eq (& id -u))) -and ($mode -band 18) -eq 0)
+        }
+        $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+        $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        $admins = @('S-1-5-18', 'S-1-5-32-544')
+        $trusted = @($admins) + $user
+        $owner = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+        if ($owner -notin $trusted -or ($System -and $owner -notin $admins)) { return $false }
+        $write = [System.Security.AccessControl.FileSystemRights]'Write, Delete, ChangePermissions, TakeOwnership, DeleteSubdirectoriesAndFiles'
+        foreach ($rule in $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
+            if ($rule.AccessControlType -eq 'Allow' -and ($rule.FileSystemRights -band $write) -and
+                $rule.IdentityReference.Value -notin $trusted) { return $false }
+        }
+        return $true
+    } catch { return $false }
+}
+
+function Read-RogueEnvFile {
+    param([string]$Path)
+    if (Test-RogueEnvFile $Path -System:($Path -eq 'C:\ProgramData\rogue\env')) {
+        Get-Content -LiteralPath $Path -Encoding UTF8 -ErrorAction SilentlyContinue
+    }
+}
+
 function Format-RogueEnvValue {
     param([string]$Value)
     return "'" + $Value.Replace("'", "'\''") + "'"

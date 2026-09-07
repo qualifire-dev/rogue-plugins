@@ -204,7 +204,9 @@ jobs:
         # gate an edit to scripts/shared/ that was never propagated ships five stale
         # copies, and an edit made directly to a plugin's copy is silently reverted by
         # the next sync — neither is visible in review.
-        run: bash scripts/sync-shared-scripts.sh --check
+        run: |
+          bash scripts/sync-shared-scripts.sh --check
+          bash tests/test_env_file_trust.sh
 
       - name: Hook-log contract (sh + mjs dispatchers)
         # The per-agent log file, line format and rotation policy are duplicated
@@ -340,6 +342,7 @@ jobs:
           pwsh -NoProfile -File tests/test_heartbeat_ps1.ps1
           pwsh -NoProfile -File tests/test_auto_update_ps1.ps1
           pwsh -NoProfile -File tests/test_setup_env.ps1
+          pwsh -NoProfile -File tests/test_env_file_trust.ps1
           pwsh -NoProfile -File tests/test_install_kiro_ps1.ps1
           pwsh -NoProfile -File tests/test_status_kiro_ps1.ps1
 
@@ -395,6 +398,8 @@ jobs:
           powershell -NoProfile -File tests/test_auto_update_ps1.ps1
           if ($LASTEXITCODE -ne 0) { exit 1 }
           powershell -NoProfile -File tests/test_setup_env.ps1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          powershell -NoProfile -File tests/test_env_file_trust.ps1
           if ($LASTEXITCODE -ne 0) { exit 1 }
           powershell -NoProfile -File tests/test_install_kiro_ps1.ps1
           if ($LASTEXITCODE -ne 0) { exit 1 }

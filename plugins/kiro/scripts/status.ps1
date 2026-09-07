@@ -106,7 +106,9 @@ function Test-AgentCarriesHooks {
 
 function Get-HookedAgentCount {
     $n = 0
-    foreach ($dir in @((Join-Path (Join-Path $env:USERPROFILE '.kiro') 'agents'), (Join-Path (Get-Location).Path '.kiro\agents'))) {
+    $dirs = @((Join-Path (Join-Path $env:USERPROFILE '.kiro') 'agents'), (Join-Path (Get-Location).Path '.kiro\agents'))
+    $dirs = @($dirs | Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object { (Resolve-Path -LiteralPath $_).ProviderPath } | Sort-Object -Unique)
+    foreach ($dir in $dirs) {
         if (-not (Test-Path -LiteralPath $dir)) { continue }
         foreach ($f in (Get-ChildItem -LiteralPath $dir -Filter *.json -File)) {
             if (Test-AgentCarriesHooks $f.FullName) { $n++ }

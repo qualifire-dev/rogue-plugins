@@ -329,6 +329,9 @@ $SHIP_ENV_VARS = @(
     'ROGUE_SHIP_ALL')
 
 function Import-ShipEnv {
+    $envLibrary = Join-Path $PluginRoot 'scripts/env-file.ps1'
+    if ($PSCommandPath) { $envLibrary = Join-Path (Split-Path -Parent $PSCommandPath) 'env-file.ps1' }
+    . ([scriptblock]::Create((Get-Content -Raw -LiteralPath $envLibrary)))
     $resolved = @{}
     $envFiles = @(
         (Join-Path $PluginRoot 'env'),
@@ -336,7 +339,7 @@ function Import-ShipEnv {
         (Join-Path (Get-UserHome) '.rogue-env'))
     foreach ($envFile in $envFiles) {
         if (-not $envFile -or -not (Test-Path -LiteralPath $envFile)) { continue }
-        foreach ($line in (Get-Content -LiteralPath $envFile)) {
+        foreach ($line in (Read-RogueEnvFile $envFile)) {
             if ($line -match '^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$') {
                 $resolved[$Matches[1]] = ConvertFrom-ShellQuoted ($Matches[2].Trim())
             }

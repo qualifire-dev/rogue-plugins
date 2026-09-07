@@ -293,6 +293,11 @@ if (Get-Command kiro-cli -ErrorAction SilentlyContinue) {
     Assert-Has 'default agent (2.x engine)             (kiro-cli not found)' $out 'no CLI means no default to report'
 }
 
+New-Home 'home-workspace'; Add-KiroWiring
+Set-Location $H
+. ([System.IO.Path]::Combine($PLUGIN, 'scripts', 'status.ps1'))
+Assert-Eq (Get-HookedAgentCount) 1 'running in the home directory counts each agent once'
+
 # -- teardown ------------------------------------------------------------------
 Set-Location $repo
 foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k]) }

@@ -229,7 +229,22 @@ Assert-Eq (Test-Path -LiteralPath (Join-Path $agents2 'rogue.json')) $false 'no 
 Assert-Eq (@(Get-Content -LiteralPath $env:KIRO_CLI_LOG | Where-Object { $_ -like 'agent set-default*' }).Count) 0 'agent set-default is never called for an agent that does not exist'
 Assert-Eq (Test-Path -LiteralPath (Join-Path $state 'default')) $false 'the CLI default is left unset'
 Assert-Eq ($out -match 'kiro-cli login') $true 'the warning names kiro-cli login'
+Assert-Eq ($out -match 'You are not logged in') $true 'the actual CLI error is reported'
 Assert-Eq (@((Read-Json (Join-Path $agents2 'custom2.json')).hooks).Count) 5 'custom agents are still merged'
+
+# Rewriting an agent must preserve nested user configuration.
+$deepFile = Join-Path $work 'deep-agent.json'
+$deep = [PSCustomObject]@{ value = 'preserve-me' }
+for ($i = 0; $i -lt 15; $i++) { $deep = [PSCustomObject]@{ child = $deep } }
+Write-KiroJsonFile $deepFile $deep
+$read = Get-Content -Raw -LiteralPath $deepFile | ConvertFrom-Json
+for ($i = 0; $i -lt 15; $i++) { $read = $read.child }
+if ($read.value -ne 'preserve-me') { throw 'deep config was changed' }
+$before = [System.IO.File]::ReadAllText($deepFile)
+for ($i = 0; $i -lt 110; $i++) { $deep = [PSCustomObject]@{ child = $deep } }
+$rejected = $false
+try { Write-KiroJsonFile $deepFile $deep } catch { $rejected = $true }
+if (-not $rejected -or [System.IO.File]::ReadAllText($deepFile) -ne $before) { throw 'over-depth config was overwritten' }
 
 $env:USERPROFILE = $prevProfile
 $env:PATH = $prevPath

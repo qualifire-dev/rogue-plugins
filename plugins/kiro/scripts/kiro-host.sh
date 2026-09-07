@@ -61,7 +61,16 @@ esac
 
 export ROGUE_KIRO_VERSION ROGUE_KIRO_DEFAULT_AGENT
 
-_rogue_json_esc() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
+_rogue_json_esc() {
+  # Encode bytes so trailing newlines survive and UTF-8 stays byte-identical.
+  printf '%s' "$1" | od -An -v -t u1 | LC_ALL=C awk '{
+    for (i = 1; i <= NF; i++) {
+      if ($i < 32) printf "\\u%04x", $i
+      else if ($i == 34 || $i == 92) printf "\\%c", $i
+      else printf "%c", $i
+    }
+  }'
+}
 
 # The /hooks/status body, from what actor.sh, install-id.sh and this file
 # resolved into the environment. `default_agent` is ABSENT, not empty, when the

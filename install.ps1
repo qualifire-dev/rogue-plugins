@@ -141,9 +141,25 @@ function New-KiroHookEntries {
 
 # UTF-8 without BOM: Windows PowerShell 5.1's Set-Content -Encoding UTF8 writes one,
 # and a BOM is not JSON.
+# PowerShell 5.1 silently stringifies objects beyond ConvertTo-Json's limit.
+# Reject those configurations before touching the user's file.
+function Assert-KiroJsonDepth {
+    param($Value, [int]$Depth = 0)
+    if ($null -eq $Value -or $Value -is [string] -or $Value -is [ValueType]) { return }
+    if ($Depth -gt 100) { throw 'Kiro agent configuration exceeds the supported JSON depth (100).' }
+    if ($Value -is [System.Collections.IDictionary]) {
+        foreach ($child in $Value.Values) { Assert-KiroJsonDepth $child ($Depth + 1) }
+    } elseif ($Value -is [System.Collections.IList]) {
+        foreach ($child in $Value) { Assert-KiroJsonDepth $child ($Depth + 1) }
+    } else {
+        foreach ($property in $Value.PSObject.Properties) { Assert-KiroJsonDepth $property.Value ($Depth + 1) }
+    }
+}
+
 function Write-KiroJsonFile {
     param([string]$Path, $Document)
-    $json = $Document | ConvertTo-Json -Depth 10
+    Assert-KiroJsonDepth $Document
+    $json = $Document | ConvertTo-Json -Depth 100 -ErrorAction Stop
     [System.IO.File]::WriteAllText($Path, $json + "`n", (New-Object System.Text.UTF8Encoding($false)))
 }
 
@@ -182,7 +198,8 @@ function Merge-KiroAgentHooks {
     $merged = @($kept + $Entries)
     if ($prop) { $prop.Value = $merged }
     else { $cfg | Add-Member -NotePropertyName hooks -NotePropertyValue $merged }
-    Write-KiroJsonFile $File $cfg
+    try { Write-KiroJsonFile $File $cfg }
+    catch { Warn2 "Leaving $File unchanged: $($_.Exception.Message)"; return 'unparseable' }
     return 'merged'
 }
 
@@ -207,9 +224,18 @@ function Invoke-KiroCli {
     param([string[]]$CliArgs)
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
-    try { $out = (& kiro-cli @CliArgs 2>$null | Out-String).Trim() } catch { $out = '' }
-    finally { $ErrorActionPreference = $prev }
-    return @{ Output = $out; ExitCode = $LASTEXITCODE }
+    $errFile = [System.IO.Path]::GetTempFileName()
+    $code = 1; $out = ''; $err = ''
+    try {
+        $out = (& kiro-cli @CliArgs 2>$errFile | Out-String).Trim()
+        $code = $LASTEXITCODE
+        $err = (Get-Content -Raw -LiteralPath $errFile -ErrorAction SilentlyContinue)
+    } catch { $err = $_.Exception.Message }
+    finally {
+        $ErrorActionPreference = $prev
+        Remove-Item -LiteralPath $errFile -Force -ErrorAction SilentlyContinue
+    }
+    return @{ Output = $out; Error = $err; ExitCode = $code }
 }
 
 # ADR 0001: the built-in default agent cannot carry hooks, so a `rogue` agent is
@@ -222,12 +248,13 @@ function Install-KiroRogueAgent {
     # on an editor window. Unverified on Windows hardware (FIRE-2038).
     $prevEditor = $env:EDITOR; $prevVisual = $env:VISUAL
     $env:EDITOR = 'cmd /c exit'; $env:VISUAL = $env:EDITOR
-    try { $null = Invoke-KiroCli @('agent', 'create', '--name', 'rogue') }
+    try { $res = Invoke-KiroCli @('agent', 'create', '--name', 'rogue') }
     finally { $env:EDITOR = $prevEditor; $env:VISUAL = $prevVisual }
     if (-not (Test-Path -LiteralPath $cfg)) {
         # kiro-cli 2.21.0 refuses `agent create` when it is not logged in, so this
         # is the ordinary first-run path on a fresh machine.
         Warn2 "kiro-cli agent create --name rogue failed - plain 'kiro-cli chat' on the 2.x engine will carry no Rogue hooks."
+        if ($res.Error) { Log $res.Error }
         Log 'If kiro-cli is not logged in, run kiro-cli login and re-run this installer; the default agent is left as it is.'
         return $false
     }

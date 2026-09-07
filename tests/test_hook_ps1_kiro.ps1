@@ -142,12 +142,27 @@ Assert-Eq $o.ExitCode 0 'a non-canonical event name cannot produce an exit 2'
 Assert-Eq (Sanitize "a`tb`nc`r`0d") 'abcd' 'Sanitize strips tab/LF/CR/NUL'
 Assert-Eq (Sanitize $null) '' 'Sanitize tolerates null'
 
+# Nested event names must never suppress a 2.x request.
+foreach ($payload in @(
+    '{"hook_event_name":"preToolUse","tool_input":{"hook_event_name":"PreToolUse"}}',
+    '{"tool_input":{"hook_event_name":"PreToolUse"},"hook_event_name":"preToolUse"}',
+    '{"tool_input":{"hook_event_name":"PreToolUse"}}'
+)) {
+    Assert-Eq (Test-KiroDuplicateAgentHook 'preToolUse' $payload) $false 'nested event name is not a duplicate'
+}
+
+# Raw UTF-8 input is decoded exactly once, regardless of Console.InputEncoding.
+$utf8Text = '{"prompt":"' + [char]0x65e5 + [char]0x672c + [char]0x8a9e + '"}'
+$stream = [System.IO.MemoryStream]::new([System.Text.Encoding]::UTF8.GetBytes($utf8Text))
+Assert-Eq (Read-KiroPayload $stream) $utf8Text 'UTF-8 stdin survives decoding'
+$stream.Dispose()
+
 # -- structural: the main body wires the table to the process ------------------
 # Resolve-KiroOutcome is worthless if the main body ignores its ExitCode, and a
 # stray `exit 2` anywhere else would be a fail-closed path.
 $src = Get-Content -Raw -LiteralPath $hook
 $count++
-if ($src -match '(?m)^exit \$o\.ExitCode\s*$') { Write-Host '  ok: main body exits with the resolved ExitCode' }
+if ($src -match '(?m)^\s*exit\s+\$o\.ExitCode\s*$') { Write-Host '  ok: main body exits with the resolved ExitCode' }
 else { Write-Host 'FAIL [main body exits with the resolved ExitCode]'; $fails++ }
 $count++
 $literalExit2 = [regex]::Matches(($src -replace '(?m)#.*$', ''), '\bexit\s+2\b').Count
@@ -159,7 +174,7 @@ else { Write-Host 'FAIL [main body injects KIRO_SESSION_ID]'; $fails++ }
 # ROGUE_HOOK_TIMEOUT=0 must fall back to the default: -TimeoutSec 0 is NO timeout,
 # which would hand the budget to Kiro's own 10s (mirrors hook.sh's `-gt 0` clamp).
 $count++
-if ($src -match '\[int\]\$t -gt 0\) \{ \$timeoutSec = \[int\]\$t \}') { Write-Host '  ok: a zero ROGUE_HOOK_TIMEOUT keeps the default budget' }
+if ($src -match '\[int\]\$t\s+-gt\s+0\)\s*\{\s*\$(?:script:)?timeoutSec\s*=\s*\[int\]\$t\s*\}') { Write-Host '  ok: a zero ROGUE_HOOK_TIMEOUT keeps the default budget' }
 else { Write-Host 'FAIL [a zero ROGUE_HOOK_TIMEOUT keeps the default budget]'; $fails++ }
 
 # -- no file-scope assignment shadows a parameter ----------------------------
@@ -172,7 +187,7 @@ else { Write-Host 'FAIL [a zero ROGUE_HOOK_TIMEOUT keeps the default budget]'; $
 $count++
 $paramNames = [regex]::Matches([regex]::Match($src, 'param\(([^)]*)\)').Groups[1].Value, '\$(\w+)') |
     ForEach-Object { $_.Groups[1].Value }
-$shadowed = @($paramNames | Where-Object { $src -match "(?im)^\s*\`$(script:)?$_\s*=(?!.*\`$$_\b)" })
+$shadowed = @($paramNames | Where-Object { $src -match "(?im)^\`$(script:)?$_\s*=(?!.*\`$$_\b)" })
 if ($shadowed.Count -eq 0) { Write-Host '  ok: no file-scope assignment shadows a parameter' }
 else { Write-Host "FAIL [no file-scope assignment shadows a parameter]: $($shadowed -join ', ')"; $fails++ }
 
