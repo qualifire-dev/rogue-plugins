@@ -55,6 +55,7 @@ function Protect-RogueEnvFile {
         return $true
     } catch {
         $script:RogueEnvProtectError = $_.Exception.Message
+        Write-Warning "Could not restrict credential file permissions: $script:RogueEnvProtectError"
         return $false
     }
 }
