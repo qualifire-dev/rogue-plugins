@@ -86,7 +86,7 @@ run_bridge() {
 make_nojq_path() {
   local d b src
   d="$(mktemp -d)"
-  for b in "$SH" sh dirname basename date mkdir cat sed grep tr tail head awk wc hostname whoami git curl printf; do
+  for b in "$SH" sh dirname basename date mkdir cat sed grep tr tail head awk wc hostname whoami git curl printf stat id; do
     src="$(command -v "$b" 2>/dev/null || true)"
     [ -n "$src" ] || continue
     ln -s "$src" "$d/$(basename "$src")" 2>/dev/null || true
@@ -399,6 +399,11 @@ assert_header "x-rogue-api-key" "user-key" "~/.rogue-env overrides <root>/env (l
 assert_eq "$(posted_header x-rogue-event)" "PreToolUse" "...while <root>/env still supplies the base URL"
 run_prec "$PREC_HOME" 'process-key'
 assert_header "x-rogue-api-key" "user-key" "a sourced file overwrites the process env on the bash bridge"
+printf 'touch "%s/unsafe-executed"\n' "$PREC_HOME" >> "$PREC_HOME/.rogue-env"
+chmod 666 "$PREC_HOME/.rogue-env"
+run_prec "$PREC_HOME" ''
+assert_header "x-rogue-api-key" "bundled-key" "a writable env file cannot override trusted credentials"
+assert_eq "$([ -e "$PREC_HOME/unsafe-executed" ] && echo yes || echo no)" "no" "unsafe env code is never executed"
 rm -rf "$PREC_ROOT" "$PREC_HOME"
 
 # ── Case 18: the presence heartbeat is spawned on SessionStart and Stop ─────
@@ -467,6 +472,17 @@ run_bridge preToolUse kiro_cli "$FIX/cli2-preToolUse-execute_bash.json"
 assert_eq "$LAST_RC" "2" "a 2.x event (camelCase body) is never dropped"
 run_bridge stop kiro_crew "$FIX/cli2-stop.json"
 assert_eq "$LAST_RC" "0" "a 2.x stop goes through (allow)"
+
+# A nested key is tool input, never proof of a duplicate hook invocation.
+for payload in \
+  '{"hook_event_name":"preToolUse","tool_input":{"hook_event_name":"PreToolUse"}}' \
+  '{"tool_input":{"hook_event_name":"PreToolUse"},"hook_event_name":"preToolUse"}' \
+  '{"tool_input":{"hook_event_name":"PreToolUse"}}'; do
+  printf '%s' "$payload" > "$STAGE/nested-event.json"
+  run_bridge preToolUse kiro_cli "$STAGE/nested-event.json"
+  assert_eq "$LAST_RC" "2" "a nested event name never suppresses enforcement"
+done
+
 
 echo
 echo "All Kiro bridge tests passed (TEST_SH=$SH)."

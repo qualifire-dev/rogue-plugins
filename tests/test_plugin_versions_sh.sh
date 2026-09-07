@@ -73,14 +73,16 @@ case "$flat" in
   *) bad "antigravity matches its VERSION file" "expected $agv_expected in: $out" ;;
 esac
 
-# The seven must be DISTINCT reads, not one file echoed seven times. A mapping bug
-# that pointed several slugs at the same manifest would satisfy every assertion
-# above only if those plugins happened to share a version - so assert the shape
-# of the real tree instead: not all seven versions are equal today.
-uniq_count=$(printf '%s' "$flat" | grep -oE '"(claude|codex|cursor|copilot|gemini|antigravity|kiro)":"[0-9]+\.[0-9]+\.[0-9]+"' \
-  | sed -E 's/.*:"//; s/"//' | sort -u | wc -l | tr -d ' ')
-if [ "$uniq_count" -gt 1 ]; then ok "the seven versions are not one value repeated ($uniq_count distinct)"; else
-  bad "the seven versions are not one value repeated" "all seven read $uniq_count distinct value(s)"; fi
+# Kiro carries BOTH: plugin.json is the version of record (every runtime reader
+# - install-id.sh, hook.ps1, heartbeat.ps1 - takes it from there) and a bare
+# VERSION file beside it for operators and the release page. Two files is one
+# drift waiting to happen, so the manifest reader refuses to publish while
+# they disagree rather than picking one.
+kiro_file=$(head -n1 "$REPO/plugins/kiro/VERSION" 2>/dev/null | tr -d ' \r\n')
+kiro_json=$(grep -oE '"version"[[:space:]]*:[[:space:]]*"[^"]*"' "$REPO/plugins/kiro/plugin.json" \
+  | head -1 | sed -E 's/.*"([^"]*)"$/\1/')
+if [ -n "$kiro_file" ] && [ "$kiro_file" = "$kiro_json" ]; then ok "kiro VERSION file mirrors plugin.json ($kiro_file)"; else
+  bad "kiro VERSION file mirrors plugin.json" "VERSION=[$kiro_file] plugin.json=[$kiro_json]"; fi
 
 # ── Fail-hard cases, against fixture trees ───────────────────────────────────
 # A build that emits a manifest with a hole is worse than a build that fails:
@@ -90,16 +92,24 @@ trap 'rm -rf "$fixture"' EXIT
 mkdir -p "$fixture/plugins/rogue/.claude-plugin" "$fixture/plugins/codex/.codex-plugin" \
          "$fixture/plugins/cursor/.cursor-plugin" "$fixture/plugins/copilot" \
          "$fixture/plugins/gemini" "$fixture/plugins/antigravity" "$fixture/plugins/kiro"
-echo '{"version":"9.9.9"}' > "$fixture/plugins/rogue/.claude-plugin/plugin.json"
-echo '{"version":"9.9.9"}' > "$fixture/plugins/codex/.codex-plugin/plugin.json"
-echo '{"version":"9.9.9"}' > "$fixture/plugins/cursor/.cursor-plugin/plugin.json"
+echo '{"version":"1.2.3"}' > "$fixture/plugins/rogue/.claude-plugin/plugin.json"
+echo '{"version":"2.3.4"}' > "$fixture/plugins/codex/.codex-plugin/plugin.json"
+echo '{"version":"3.4.5"}' > "$fixture/plugins/cursor/.cursor-plugin/plugin.json"
 echo '{"version":"9.9.9"}' > "$fixture/plugins/kiro/plugin.json"
-echo '{"version":"9.9.9"}' > "$fixture/plugins/copilot/plugin.json"
-echo '{"version":"9.9.9"}' > "$fixture/plugins/gemini/gemini-extension.json"
-echo '9.9.9' > "$fixture/plugins/antigravity/VERSION"
+echo '9.9.9' > "$fixture/plugins/kiro/VERSION"
+echo '{"version":"4.5.6"}' > "$fixture/plugins/copilot/plugin.json"
+echo '{"version":"5.6.7"}' > "$fixture/plugins/gemini/gemini-extension.json"
+echo '6.7.8' > "$fixture/plugins/antigravity/VERSION"
 
-if bash "$SCRIPT" "$fixture" >/dev/null 2>&1; then ok "complete fixture tree succeeds"; else
-  bad "complete fixture tree succeeds" "exited non-zero"; fi
+out=$(bash "$SCRIPT" "$fixture" 2>/dev/null) || bad "complete fixture tree succeeds" "exited non-zero"
+flat=$(printf '%s' "$out" | tr -d ' \t\n\r')
+for mapping in claude:1.2.3 codex:2.3.4 cursor:3.4.5 copilot:4.5.6 gemini:5.6.7 antigravity:6.7.8 kiro:9.9.9; do
+  slug=${mapping%%:*}; expected=${mapping#*:}
+  case "$flat" in
+    *"\"$slug\":\"$expected\""*) ok "$slug reads its own fixture ($expected)" ;;
+    *) bad "$slug reads its own fixture" "$out" ;;
+  esac
+done
 
 rm -f "$fixture/plugins/gemini/gemini-extension.json"
 if bash "$SCRIPT" "$fixture" >/dev/null 2>&1; then
@@ -115,6 +125,17 @@ echo '{"version":"9.9.9"}' > "$fixture/plugins/copilot/plugin.json"
 if bash "$SCRIPT" "$fixture" >/dev/null 2>&1; then
   bad "empty VERSION file fails" "exited 0"; else ok "empty VERSION file fails"; fi
 echo '9.9.9' > "$fixture/plugins/antigravity/VERSION"
+
+# A kiro VERSION file that disagrees with plugin.json, or is missing, fails the
+# build: publishing either value would be a manifest asserting a version half
+# the plugin does not carry.
+echo '9.9.8' > "$fixture/plugins/kiro/VERSION"
+if bash "$SCRIPT" "$fixture" >/dev/null 2>&1; then
+  bad "kiro VERSION drift fails" "exited 0 with VERSION 9.9.8 vs plugin.json 9.9.9"; else ok "kiro VERSION drift fails"; fi
+rm -f "$fixture/plugins/kiro/VERSION"
+if bash "$SCRIPT" "$fixture" >/dev/null 2>&1; then
+  bad "missing kiro VERSION fails" "exited 0"; else ok "missing kiro VERSION fails"; fi
+echo '9.9.9' > "$fixture/plugins/kiro/VERSION"
 
 # ── The whole field must be validated, not a substring ───────────────────────
 # Both readers used to extract a THREE-FIELD SUBSTRING out of the value and throw

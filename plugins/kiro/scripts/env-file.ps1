@@ -1,3 +1,44 @@
+# A Windows PowerShell child can inherit PowerShell 7's PSModulePath. Load
+# this engine's ACL cmdlets explicitly instead of resolving an incompatible module.
+if ($PSVersionTable.PSVersion.Major -eq 5) {
+    Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1') -ErrorAction Stop
+}
+
+# Reject files writable by identities other than the current user or Windows
+# administrators/system. System-wide configuration cannot be user-owned.
+function Test-RogueEnvFile {
+    param([string]$Path, [switch]$System)
+    try {
+        if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+        if ($PSVersionTable.PSVersion.Major -ge 6 -and -not $IsWindows) {
+            $info = & stat -Lc '%u %a' $Path 2>$null
+            if ($LASTEXITCODE -ne 0) { $info = & stat -Lf '%u %Lp' $Path 2>$null }
+            if ($LASTEXITCODE -ne 0 -or $info -notmatch '^(\d+) ([0-7]+)$') { return $false }
+            $ownerId = $Matches[1]; $mode = [Convert]::ToInt32($Matches[2], 8)
+            return (($ownerId -eq '0' -or (-not $System -and $ownerId -eq (& id -u))) -and ($mode -band 18) -eq 0)
+        }
+        $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+        $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        $admins = @('S-1-5-18', 'S-1-5-32-544')
+        $trusted = @($admins) + $user
+        $owner = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+        if ($owner -notin $trusted -or ($System -and $owner -notin $admins)) { return $false }
+        $write = [System.Security.AccessControl.FileSystemRights]'Write, Delete, ChangePermissions, TakeOwnership, DeleteSubdirectoriesAndFiles'
+        foreach ($rule in $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
+            if ($rule.AccessControlType -eq 'Allow' -and ($rule.FileSystemRights -band $write) -and
+                $rule.IdentityReference.Value -notin $trusted) { return $false }
+        }
+        return $true
+    } catch { return $false }
+}
+
+function Read-RogueEnvFile {
+    param([string]$Path)
+    if (Test-RogueEnvFile $Path -System:($Path -eq 'C:\ProgramData\rogue\env')) {
+        Get-Content -LiteralPath $Path -Encoding UTF8 -ErrorAction SilentlyContinue
+    }
+}
+
 function Format-RogueEnvValue {
     param([string]$Value)
     return "'" + $Value.Replace("'", "'\''") + "'"
@@ -7,16 +48,18 @@ function Protect-RogueEnvFile {
     param([string]$Path)
     $script:RogueEnvProtectError = ''
     try {
-        $acl = Get-Acl $Path
+        $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
         $acl.SetAccessRuleProtection($true, $false)
-        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-            [System.Security.Principal.WindowsIdentity]::GetCurrent().Name,
-            'FullControl', 'Allow')
+        $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+            [System.Security.Principal.WindowsIdentity]::GetCurrent().User,
+            [System.Security.AccessControl.FileSystemRights]::FullControl,
+            [System.Security.AccessControl.AccessControlType]::Allow)
         $acl.SetAccessRule($rule)
-        Set-Acl $Path $acl
+        Set-Acl -LiteralPath $Path -AclObject $acl -ErrorAction Stop
         return $true
     } catch {
         $script:RogueEnvProtectError = $_.Exception.Message
+        Write-Warning "Could not restrict credential file permissions: $script:RogueEnvProtectError"
         return $false
     }
 }

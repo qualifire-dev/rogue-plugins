@@ -45,6 +45,8 @@ and writes your API key, confirms your actor identity, and on macOS/Linux
 configures a `Rogue Security` status badge below the Claude prompt
 (🟢 connected / 🔴 not set up).
 
+On macOS, Linux, and WSL, `install.sh` requires Node.js to merge Kiro CLI 2.x agent hooks. Without Node.js, the installer skips those hooks and CLI 2.x sessions are not covered. Install Node.js and re-run the installer. The Windows `install.ps1` merge uses PowerShell and does not require Node.js.
+
 To target specific agents instead of all detected ones, pass `--claude`, `--codex`,
 `--cursor`, `--gemini`, `--copilot`, `--antigravity` and/or `--kiro` (PowerShell:
 `-Claude` / `-Codex` / `-Cursor` / `-Gemini` / `-Copilot` / `-Antigravity` / `-Kiro`):

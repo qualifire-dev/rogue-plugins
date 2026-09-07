@@ -55,7 +55,7 @@ $ProgressPreference = 'SilentlyContinue'
 
 # ── constants ──────────────────────────────────────────────────────────────
 $SHIP_ENDPOINT_PATH = '/api/v1/hooks/logs'
-$KNOWN_LOG_SLUGS = @('claude', 'codex', 'cursor', 'gemini', 'copilot', 'antigravity')
+$KNOWN_LOG_SLUGS = @('claude', 'codex', 'cursor', 'gemini', 'copilot', 'antigravity', 'kiro')
 # Bytes scanned when fingerprinting a log's first line. NOT 200: a real log line is
 # timestamp + provider + event + up to 400 chars of `raw=`, i.e. commonly 500-700
 # bytes, so a 200-byte window would find no newline in a typical log's first line
@@ -329,6 +329,9 @@ $SHIP_ENV_VARS = @(
     'ROGUE_SHIP_ALL')
 
 function Import-ShipEnv {
+    $envLibrary = Join-Path $PluginRoot 'scripts/env-file.ps1'
+    if ($PSCommandPath) { $envLibrary = Join-Path (Split-Path -Parent $PSCommandPath) 'env-file.ps1' }
+    . ([scriptblock]::Create((Get-Content -Raw -LiteralPath $envLibrary)))
     $resolved = @{}
     $envFiles = @(
         (Join-Path $PluginRoot 'env'),
@@ -336,7 +339,7 @@ function Import-ShipEnv {
         (Join-Path (Get-UserHome) '.rogue-env'))
     foreach ($envFile in $envFiles) {
         if (-not $envFile -or -not (Test-Path -LiteralPath $envFile)) { continue }
-        foreach ($line in (Get-Content -LiteralPath $envFile)) {
+        foreach ($line in (Read-RogueEnvFile $envFile)) {
             if ($line -match '^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$') {
                 $resolved[$Matches[1]] = ConvertFrom-ShellQuoted ($Matches[2].Trim())
             }

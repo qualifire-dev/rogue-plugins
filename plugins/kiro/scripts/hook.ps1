@@ -24,7 +24,11 @@
 #   2. C:\ProgramData\rogue\env  (MDM-provisioned; mirrors /etc/rogue/env)
 #   3. %USERPROFILE%\.rogue-env  (user / installer-written)
 
-param([string]$EventName = '', [string]$Surface = '', [string]$PluginRoot = '')
+# $SurfaceArg, not $Surface: PowerShell variable names are case-insensitive, so
+# the file-scope `$script:surface = ''` below would overwrite a parameter of that
+# name before the main body validated it, and every event would go out as
+# kiro_cli. Positional, so the hook file's `hook.ps1 <event> <surface>` is unchanged.
+param([string]$EventName = '', [string]$SurfaceArg = '', [string]$PluginRoot = '')
 
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'
@@ -187,8 +191,10 @@ function Add-KiroSessionId {
 function Test-KiroDuplicateAgentHook {
     param([string]$TriggerArg, [string]$Payload)
     if ($TriggerArg -cnotin @('agentSpawn', 'userPromptSubmit', 'preToolUse', 'postToolUse', 'stop')) { return $false }
-    if ($Payload -and $Payload -match '"hook_event_name"\s*:\s*"([^"]*)"') { return [bool]($Matches[1] -cmatch '^[A-Z]') }
-    return $false
+    try {
+        $body = ConvertFrom-Json -InputObject $Payload -ErrorAction Stop
+        return ($body -is [PSCustomObject] -and $body.hook_event_name -is [string] -and $body.hook_event_name -cmatch '^[A-Z]')
+    } catch { return $false }
 }
 
 # STRICT shape match: the pair, not the substrings, so an allow that carries
@@ -239,158 +245,182 @@ function Resolve-KiroOutcome {
     return $o
 }
 
-# Test seam: dot-sourcing with ROGUE_PS_LIB_ONLY=1 loads the functions above
-# without running the bridge. Production never sets this.
-if ($env:ROGUE_PS_LIB_ONLY) { return }
+function Initialize-KiroContext {
+    # Windows PowerShell 5.1 may negotiate only TLS 1.0/1.1 by default; add TLS 1.2.
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = `
+            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    } catch {}
 
-# Windows PowerShell 5.1 may negotiate only TLS 1.0/1.1 by default; add TLS 1.2.
-try {
-    [Net.ServicePointManager]::SecurityProtocol = `
-        [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-} catch {}
+    # Stand down on non-Windows (Kiro runs hook.sh there; this guards a stray pwsh).
+    if ($PSVersionTable.PSVersion.Major -ge 6 -and -not $IsWindows) { exit 0 }
 
-# Stand down on non-Windows (Kiro runs hook.sh there; this guards a stray pwsh).
-if ($PSVersionTable.PSVersion.Major -ge 6 -and -not $IsWindows) { exit 0 }
+    $script:triggerArg = $EventName
+    $script:EventName = ConvertTo-KiroEvent $EventName
+    $script:surface = Get-KiroSurface $SurfaceArg
+    $script:agent = if ($script:surface) { $script:surface } else { 'kiro_cli' }
+    Dbg "event=$EventName surface=$agent"
 
-$triggerArg = $EventName
-$EventName = ConvertTo-KiroEvent $EventName
-$script:surface = Get-KiroSurface $Surface
-$agent = if ($script:surface) { $script:surface } else { 'kiro_cli' }
-Dbg "event=$EventName surface=$agent"
+    if (-not $PluginRoot -and $PSScriptRoot) { $script:PluginRoot = Split-Path -Parent $PSScriptRoot }
+    if (-not $PluginRoot) { $script:PluginRoot = $env:KIRO_PLUGIN_ROOT }
+    if (-not $PluginRoot) { try { $script:PluginRoot = (Get-Location).Path } catch { $script:PluginRoot = '.' } }
 
-if (-not $PluginRoot -and $PSScriptRoot) { $PluginRoot = Split-Path -Parent $PSScriptRoot }
-if (-not $PluginRoot) { $PluginRoot = $env:KIRO_PLUGIN_ROOT }
-if (-not $PluginRoot) { try { $PluginRoot = (Get-Location).Path } catch { $PluginRoot = '.' } }
+    # -- credential resolution (later file wins; process env wins over all) -----
+    $script:creds = @{}
+    . ([scriptblock]::Create((Get-Content -Raw -LiteralPath (Join-Path $PluginRoot 'scripts/env-file.ps1'))))
+    foreach ($f in @((Join-Path $PluginRoot 'env'), 'C:\ProgramData\rogue\env', (Join-Path $env:USERPROFILE '.rogue-env'))) {
+        if (-not $f -or -not (Test-Path -LiteralPath $f)) { continue }
+        foreach ($line in (Read-RogueEnvFile $f)) {
+            if ($line -match '^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)=(.+)$') {
+                $creds[$Matches[1]] = ConvertFrom-ShellQuoted ($Matches[2].Trim())
+            }
+        }
+    }
+    # ROGUE_LOG_* ride the same list so a process-env value still beats the files,
+    # which is what makes the resolved precedence identical to hook.sh's.
+    foreach ($k in 'ROGUE_API_KEY','ROGUE_ACTOR_EMAIL','ROGUE_ACTOR_NAME','ROGUE_BASE_URL','ROGUE_API_URL',
+                   'ROGUE_LOG_FILE','ROGUE_LOG_DIR','ROGUE_LOG_MAX_BYTES','ROGUE_HOOK_TIMEOUT') {
+        $val = [Environment]::GetEnvironmentVariable($k); if ($val) { $creds[$k] = $val }
+    }
 
-# -- credential resolution (later file wins; process env wins over all) -----
-$creds = @{}
-foreach ($f in @((Join-Path $PluginRoot 'env'), 'C:\ProgramData\rogue\env', (Join-Path $env:USERPROFILE '.rogue-env'))) {
-    if (-not $f -or -not (Test-Path -LiteralPath $f)) { continue }
-    foreach ($line in (Get-Content -LiteralPath $f)) {
-        if ($line -match '^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)=(.+)$') {
-            $creds[$Matches[1]] = ConvertFrom-ShellQuoted ($Matches[2].Trim())
+    # After the credential files (so they can relocate the log), before the API-key
+    # check (so an unconfigured install still records outcome=unconfigured).
+    Initialize-Logging $creds
+    Dbg "logFile=$logFile cap=$logMaxBytes"
+
+    $script:apiKey = $creds['ROGUE_API_KEY']
+    if (-not $apiKey) {
+        Log 'outcome=unconfigured'
+        exit 0
+    }
+
+    $script:url = $creds['ROGUE_API_URL']
+    if (-not $url) {
+        $baseUrl = $creds['ROGUE_BASE_URL']; if (-not $baseUrl) { $baseUrl = 'https://api.rogue.security' }
+        $script:url = "$($baseUrl.TrimEnd('/'))/api/v1/hooks/kiro"
+    }
+
+    # curl budget in hook.sh; here the request timeout. The hook file gives the
+    # command 10s, so 8s leaves room without letting Kiro's own timeout be what
+    # fails us open. Zero falls back to the default: -TimeoutSec 0 means NO timeout.
+    $script:timeoutSec = 8
+    $t = $creds['ROGUE_HOOK_TIMEOUT']
+    if ($t -match '^[0-9]{1,9}$' -and [int]$t -gt 0) { $script:timeoutSec = [int]$t }
+}
+
+function Resolve-KiroActor {
+    # -- actor resolution (mirrors actor.sh) -------------------------------------
+    $script:actorName = $creds['ROGUE_ACTOR_NAME']
+    if (-not $actorName) { try { $script:actorName = (& git config --global user.name 2>$null | Out-String).Trim() } catch {} }
+    if (-not $actorName) { $script:actorName = $env:USERNAME }
+
+    $script:actorEmail = $creds['ROGUE_ACTOR_EMAIL']
+    if (-not $actorEmail) { try { $script:actorEmail = (& git config --global user.email 2>$null | Out-String).Trim() } catch {} }
+    if (-not $actorEmail) {
+        if ($env:USERNAME -and $env:COMPUTERNAME) { $script:actorEmail = "$($env:USERNAME)@$($env:COMPUTERNAME)" }
+        elseif ($env:USERNAME) { $script:actorEmail = $env:USERNAME } else { $script:actorEmail = $env:COMPUTERNAME }
+    }
+}
+
+function Read-KiroPayload {
+    param([System.IO.Stream]$InputStream = [Console]::OpenStandardInput())
+    $bytes = New-Object System.IO.MemoryStream
+    try {
+        $InputStream.CopyTo($bytes)
+        $payload = (New-Object System.Text.UTF8Encoding($false, $true)).GetString($bytes.ToArray())
+    } finally { $bytes.Dispose() }
+    if (-not $payload) { $payload = '{}' }
+    return $payload.TrimStart([char]0xFEFF)
+}
+
+function Resolve-KiroInstall {
+    # -- install identity: host + version (mirrors install-id.sh) ----------------
+    $installError = @()
+    $script:hostName = $env:COMPUTERNAME
+    if (-not $hostName) { try { $script:hostName = [System.Net.Dns]::GetHostName() } catch { $script:hostName = '' } }
+    if (-not $hostName) { $script:hostName = 'unknown'; $installError += 'host-unresolved' }
+
+    $script:pluginVersion = 'unknown'
+    $pluginJson = Join-Path $PluginRoot 'plugin.json'
+    if (Test-Path -LiteralPath $pluginJson) {
+        $m = [regex]::Match((Get-Content -Raw -LiteralPath $pluginJson), '"version"\s*:\s*"([0-9]+\.[0-9]+\.[0-9]+)')
+        if ($m.Success) { $script:pluginVersion = $m.Groups[1].Value }
+        else { $installError += "version-unparsed:$pluginJson" }
+    } else {
+        $installError += "manifest-missing:$pluginJson"
+    }
+    if ($installError.Count) { Log "error=install-id $($installError -join ',')" }
+}
+
+function Start-KiroHeartbeat {
+    # -- presence heartbeat (SessionStart unthrottled, Stop throttled) ------------
+    # Detached; heartbeat.ps1 takes the surface and the trigger, as heartbeat.sh does.
+    if ($EventName -eq 'SessionStart' -or $EventName -eq 'Stop') {
+        $hb = Join-Path $PluginRoot 'scripts\heartbeat.ps1'
+        if (Test-Path -LiteralPath $hb) {
+            try {
+                Start-Process -FilePath 'powershell' -WindowStyle Hidden `
+                    -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',$hb,$agent,$EventName | Out-Null
+            } catch { Dbg "heartbeat spawn failed: $($_.Exception.Message)" }
         }
     }
 }
-# ROGUE_LOG_* ride the same list so a process-env value still beats the files,
-# which is what makes the resolved precedence identical to hook.sh's.
-foreach ($k in 'ROGUE_API_KEY','ROGUE_ACTOR_EMAIL','ROGUE_ACTOR_NAME','ROGUE_BASE_URL','ROGUE_API_URL',
-               'ROGUE_LOG_FILE','ROGUE_LOG_DIR','ROGUE_LOG_MAX_BYTES','ROGUE_HOOK_TIMEOUT') {
-    $val = [Environment]::GetEnvironmentVariable($k); if ($val) { $creds[$k] = $val }
-}
 
-# After the credential files (so they can relocate the log), before the API-key
-# check (so an unconfigured install still records outcome=unconfigured).
-Initialize-Logging $creds
-Dbg "logFile=$logFile cap=$logMaxBytes"
-
-$apiKey = $creds['ROGUE_API_KEY']
-if (-not $apiKey) {
-    Log 'outcome=unconfigured'
-    exit 0
-}
-
-$url = $creds['ROGUE_API_URL']
-if (-not $url) {
-    $baseUrl = $creds['ROGUE_BASE_URL']; if (-not $baseUrl) { $baseUrl = 'https://api.rogue.security' }
-    $url = "$($baseUrl.TrimEnd('/'))/api/v1/hooks/kiro"
-}
-
-# curl budget in hook.sh; here the request timeout. The hook file gives the
-# command 10s, so 8s leaves room without letting Kiro's own timeout be what
-# fails us open. Zero falls back to the default: -TimeoutSec 0 means NO timeout.
-$timeoutSec = 8
-$t = $creds['ROGUE_HOOK_TIMEOUT']
-if ($t -match '^[0-9]{1,9}$' -and [int]$t -gt 0) { $timeoutSec = [int]$t }
-
-# -- actor resolution (mirrors actor.sh) -------------------------------------
-$actorName = $creds['ROGUE_ACTOR_NAME']
-if (-not $actorName) { try { $actorName = (& git config --global user.name 2>$null | Out-String).Trim() } catch {} }
-if (-not $actorName) { $actorName = $env:USERNAME }
-
-$actorEmail = $creds['ROGUE_ACTOR_EMAIL']
-if (-not $actorEmail) { try { $actorEmail = (& git config --global user.email 2>$null | Out-String).Trim() } catch {} }
-if (-not $actorEmail) {
-    if ($env:USERNAME -and $env:COMPUTERNAME) { $actorEmail = "$($env:USERNAME)@$($env:COMPUTERNAME)" }
-    elseif ($env:USERNAME) { $actorEmail = $env:USERNAME } else { $actorEmail = $env:COMPUTERNAME }
-}
-
-# -- payload from stdin (recover UTF-8, strip BOM), then the 2.x session id ---
-$payload = [Console]::In.ReadToEnd()
-if (-not $payload) { $payload = '{}' }
-try {
-    $raw = [Console]::InputEncoding.GetBytes($payload)
-    $payload = [System.Text.Encoding]::UTF8.GetString($raw)
-} catch {}
-$payload = $payload.TrimStart([char]0xFEFF)
-$payload = Add-KiroSessionId $payload $env:KIRO_SESSION_ID
-
-# One copy per event on the 3.0 engine (see Test-KiroDuplicateAgentHook):
-# before the heartbeat and the request.
-if (Test-KiroDuplicateAgentHook $triggerArg $payload) {
-    Log "outcome=duplicate engine=3.0 trigger=$triggerArg"
-    exit 0
-}
-
-# -- install identity: host + version (mirrors install-id.sh) ----------------
-$installError = @()
-$hostName = $env:COMPUTERNAME
-if (-not $hostName) { try { $hostName = [System.Net.Dns]::GetHostName() } catch { $hostName = '' } }
-if (-not $hostName) { $hostName = 'unknown'; $installError += 'host-unresolved' }
-
-$pluginVersion = 'unknown'
-$pluginJson = Join-Path $PluginRoot 'plugin.json'
-if (Test-Path -LiteralPath $pluginJson) {
-    $m = [regex]::Match((Get-Content -Raw -LiteralPath $pluginJson), '"version"\s*:\s*"([0-9]+\.[0-9]+\.[0-9]+)')
-    if ($m.Success) { $pluginVersion = $m.Groups[1].Value }
-    else { $installError += "version-unparsed:$pluginJson" }
-} else {
-    $installError += "manifest-missing:$pluginJson"
-}
-if ($installError.Count) { Log "error=install-id $($installError -join ',')" }
-
-# -- presence heartbeat (SessionStart unthrottled, Stop throttled) ------------
-# Detached; heartbeat.ps1 takes the surface and the trigger, as heartbeat.sh does.
-if ($EventName -eq 'SessionStart' -or $EventName -eq 'Stop') {
-    $hb = Join-Path $PluginRoot 'scripts\heartbeat.ps1'
-    if (Test-Path -LiteralPath $hb) {
-        try {
-            Start-Process -FilePath 'powershell' -WindowStyle Hidden `
-                -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',$hb,$agent,$EventName | Out-Null
-        } catch { Dbg "heartbeat spawn failed: $($_.Exception.Message)" }
+function Send-KiroRequest {
+    # -- POST (fail-open) --------------------------------------------------------
+    $headers = @{
+        'x-rogue-api-key'     = $apiKey
+        'x-rogue-event'       = $EventName
+        'x-rogue-agent'       = $agent
+        'x-rogue-host'        = $hostName
+        'x-rogue-version'     = $pluginVersion
+        'x-rogue-actor-email' = $actorEmail
+        'x-rogue-actor-name'  = $actorName
     }
+    $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
+    $script:resp = ''
+    $script:code = '000'
+    $script:requestRc = 1
+    try {
+        $r = Invoke-WebRequest -Uri $url -Method Post `
+            -Headers $headers -ContentType 'application/json' -Body $bodyBytes `
+            -UseBasicParsing -TimeoutSec $timeoutSec -ErrorAction Stop
+        $script:requestRc = 0
+        $script:code = [string]$r.StatusCode
+        if ($r.StatusCode -eq 200) {
+            try { $script:resp = [System.Text.Encoding]::UTF8.GetString($r.RawContentStream.ToArray()) }
+            catch { $script:resp = [string]$r.Content }
+        }
+    } catch { Dbg "POST failed: $($_.Exception.Message)"; $script:resp = '' }
 }
 
-# -- POST (fail-open) --------------------------------------------------------
-$headers = @{
-    'x-rogue-api-key'     = $apiKey
-    'x-rogue-event'       = $EventName
-    'x-rogue-agent'       = $agent
-    'x-rogue-host'        = $hostName
-    'x-rogue-version'     = $pluginVersion
-    'x-rogue-actor-email' = $actorEmail
-    'x-rogue-actor-name'  = $actorName
+function Write-KiroDecision {
+    # -- translate, log ONE line, answer Kiro -------------------------------------
+    $o = Resolve-KiroOutcome $EventName $resp
+    $respHead = if ($resp.Length -gt 400) { $resp.Substring(0, 400) } else { $resp }
+    $note = if ($o.Note) { " $($o.Note)" } else { '' }
+    Log "outcome=$($o.Outcome)$note http=$code rc=$requestRc raw=$(Sanitize $respHead)"
+
+    if ($o.Stdout) { Write-Raw $o.Stdout }
+    if ($o.Stderr) { [Console]::Error.WriteLine($o.Stderr) }
+    exit $o.ExitCode
 }
-$bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
-$resp = ''
-$code = '000'
-try {
-    $r = Invoke-WebRequest -Uri $url -Method Post `
-        -Headers $headers -ContentType 'application/json' -Body $bodyBytes `
-        -UseBasicParsing -TimeoutSec $timeoutSec -ErrorAction Stop
-    $code = [string]$r.StatusCode
-    if ($r.StatusCode -eq 200) {
-        try { $resp = [System.Text.Encoding]::UTF8.GetString($r.RawContentStream.ToArray()) }
-        catch { $resp = [string]$r.Content }
+
+function Invoke-KiroHook {
+    Initialize-KiroContext
+    Resolve-KiroActor
+    $payload = Read-KiroPayload
+    $payload = Add-KiroSessionId $payload $env:KIRO_SESSION_ID
+    if (Test-KiroDuplicateAgentHook $triggerArg $payload) {
+        Log "outcome=duplicate engine=3.0 trigger=$triggerArg"
+        exit 0
     }
-} catch { Dbg "POST failed: $($_.Exception.Message)"; $resp = '' }
+    Resolve-KiroInstall
+    Start-KiroHeartbeat
+    Send-KiroRequest
+    Write-KiroDecision
+}
 
-# -- translate, log ONE line, answer Kiro -------------------------------------
-$o = Resolve-KiroOutcome $EventName $resp
-$respHead = if ($resp.Length -gt 400) { $resp.Substring(0, 400) } else { $resp }
-$note = if ($o.Note) { " $($o.Note)" } else { '' }
-Log "outcome=$($o.Outcome)$note http=$code raw=$(Sanitize $respHead)"
-
-if ($o.Stdout) { Write-Raw $o.Stdout }
-if ($o.Stderr) { [Console]::Error.WriteLine($o.Stderr) }
-exit $o.ExitCode
+# Dot-sourcing through the test seam defines every function without running it.
+if ($env:ROGUE_PS_LIB_ONLY) { return }
+try { Invoke-KiroHook } catch { Dbg "bridge failed: $($_.Exception.Message)"; exit 0 }

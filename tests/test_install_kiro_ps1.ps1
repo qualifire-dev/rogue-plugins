@@ -32,7 +32,7 @@ $env:KIRO_STATE   = $state
 # with the real CLI's not-logged-in error when KIRO_FAKE_CREATE_FAILS is set;
 # `agent set-default X` records the choice. A .ps1 resolves by bare name from
 # PATH on Windows; on Linux/macOS a sh shim beside it does.
-$fakeCli = Join-Path $bin 'kiro-cli.ps1'
+$fakeCli = Join-Path $bin 'kiro-cli-fixture.ps1'
 @'
 param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Argv)
 Add-Content -LiteralPath $env:KIRO_CLI_LOG -Value ($Argv -join ' ')
@@ -62,7 +62,12 @@ if ($sub -eq 'settings chat.defaultAgent') {
 }
 exit 0
 '@ | Set-Content -LiteralPath $fakeCli -Encoding UTF8
-if ($env:OS -ne 'Windows_NT') {
+if ($env:OS -eq 'Windows_NT') {
+    # A child process, like the real executable: Console.Error from an in-process
+    # .ps1 bypasses PowerShell's error stream and cannot exercise stderr capture.
+    [System.IO.File]::WriteAllText((Join-Path $bin 'kiro-cli.cmd'),
+        "@echo off`r`npowershell.exe -NoProfile -File `"$fakeCli`" %*`r`nexit /b %errorlevel%`r`n")
+} else {
     $shim = Join-Path $bin 'kiro-cli'
     [System.IO.File]::WriteAllText($shim, "#!/bin/sh`nexec pwsh -NoProfile -File `"$fakeCli`" `"`$@`"`n")
     & chmod +x $shim
@@ -229,7 +234,22 @@ Assert-Eq (Test-Path -LiteralPath (Join-Path $agents2 'rogue.json')) $false 'no 
 Assert-Eq (@(Get-Content -LiteralPath $env:KIRO_CLI_LOG | Where-Object { $_ -like 'agent set-default*' }).Count) 0 'agent set-default is never called for an agent that does not exist'
 Assert-Eq (Test-Path -LiteralPath (Join-Path $state 'default')) $false 'the CLI default is left unset'
 Assert-Eq ($out -match 'kiro-cli login') $true 'the warning names kiro-cli login'
+Assert-Eq ($out -match 'You are not logged in') $true 'the actual CLI error is reported'
 Assert-Eq (@((Read-Json (Join-Path $agents2 'custom2.json')).hooks).Count) 5 'custom agents are still merged'
+
+# Rewriting an agent must preserve nested user configuration.
+$deepFile = Join-Path $work 'deep-agent.json'
+$deep = [PSCustomObject]@{ value = 'preserve-me' }
+for ($i = 0; $i -lt 15; $i++) { $deep = [PSCustomObject]@{ child = $deep } }
+Write-KiroJsonFile $deepFile $deep
+$read = Get-Content -Raw -LiteralPath $deepFile | ConvertFrom-Json
+for ($i = 0; $i -lt 15; $i++) { $read = $read.child }
+if ($read.value -ne 'preserve-me') { throw 'deep config was changed' }
+$before = [System.IO.File]::ReadAllText($deepFile)
+for ($i = 0; $i -lt 110; $i++) { $deep = [PSCustomObject]@{ child = $deep } }
+$rejected = $false
+try { Write-KiroJsonFile $deepFile $deep } catch { $rejected = $true }
+if (-not $rejected -or [System.IO.File]::ReadAllText($deepFile) -ne $before) { throw 'over-depth config was overwritten' }
 
 $env:USERPROFILE = $prevProfile
 $env:PATH = $prevPath

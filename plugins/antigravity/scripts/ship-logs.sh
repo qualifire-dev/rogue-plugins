@@ -54,7 +54,7 @@ set -u
 
 # ── constants ──────────────────────────────────────────────────────────────
 SHIP_ENDPOINT_PATH="/api/v1/hooks/logs"
-KNOWN_LOG_SLUGS="claude codex cursor gemini copilot antigravity"
+KNOWN_LOG_SLUGS="claude codex cursor gemini copilot antigravity kiro"
 # Bytes scanned when fingerprinting a log's first line. NOT the 200 an earlier
 # draft of the design doc specified: a real log line is timestamp + provider +
 # event + up to 400 chars of `raw=`, i.e. commonly 500-700 bytes, so a 200-byte
@@ -127,9 +127,10 @@ log() {
   # visible.
   debug "$*"
   [ -n "$SELF_LOG_FILE" ] || return 0
-  mkdir -p "$(dirname "$SELF_LOG_FILE")" 2>/dev/null
-  printf '%s provider=%s event=ShipLogs %s\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SHIPPER_SLUG" "$*" >> "$SELF_LOG_FILE" 2>/dev/null
+  ( umask 077
+    mkdir -p "$(dirname "$SELF_LOG_FILE")" 2>/dev/null
+    printf '%s provider=%s event=ShipLogs %s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SHIPPER_SLUG" "$*" >> "$SELF_LOG_FILE" 2>/dev/null )
   return 0
 }
 
@@ -299,11 +300,13 @@ ROGUE_SHIP_MAX_BYTES ROGUE_SHIP_MAX_RUN_BYTES ROGUE_SHIP_MAX_LINE_BYTES
 ROGUE_SHIP_ALL'
 
 load_env() {
+  [ -r "$(dirname "$0")/env-file.sh" ] || return 0
+  . "$(dirname "$0")/env-file.sh"
   for _env_var_name in $SHIP_ENV_VARS; do
     eval "_process_env_$_env_var_name=\${$_env_var_name:-}"
   done
   for _env_file in "$PLUGIN_ROOT/env" /etc/rogue/env "$HOME/.rogue-env"; do
-    [ -n "$_env_file" ] && [ -r "$_env_file" ] && . "$_env_file" 2>/dev/null
+    rogue_source_env "$_env_file" 2>/dev/null
   done
   for _env_var_name in $SHIP_ENV_VARS; do
     eval "[ -n \"\${_process_env_$_env_var_name:-}\" ] && $_env_var_name=\$_process_env_$_env_var_name"
