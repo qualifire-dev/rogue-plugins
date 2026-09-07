@@ -1,3 +1,9 @@
+# A Windows PowerShell child can inherit PowerShell 7's PSModulePath. Load
+# this engine's ACL cmdlets explicitly instead of resolving an incompatible module.
+if ($PSVersionTable.PSVersion.Major -eq 5) {
+    Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1') -ErrorAction Stop
+}
+
 # Reject files writable by identities other than the current user or Windows
 # administrators/system. System-wide configuration cannot be user-owned.
 function Test-RogueEnvFile {
@@ -42,9 +48,7 @@ function Protect-RogueEnvFile {
     param([string]$Path)
     $script:RogueEnvProtectError = ''
     try {
-        # Write only the DACL. Copying the existing owner/group can require
-        # privileges the setup subprocess does not hold on Windows 5.1.
-        $acl = New-Object System.Security.AccessControl.FileSecurity
+        $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
         $acl.SetAccessRuleProtection($true, $false)
         $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
             [System.Security.Principal.WindowsIdentity]::GetCurrent().User,
