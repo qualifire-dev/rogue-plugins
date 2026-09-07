@@ -34,6 +34,12 @@ Assert-Eq (Test-RogueReadCapturePath '/tmp/a.txt')  $false 'txt is not captured'
 Assert-Eq (Test-RogueReadCapturePath '/tmp/noext')  $false 'a file with no extension is not captured'
 Assert-Eq (Test-RogueReadCapturePath '/tmp/a.pdf.gz') $false 'only the LAST extension counts'
 
+# ── Truncatable subset ───────────────────────────────────────────────────
+Assert-Eq (Test-RogueReadCaptureTruncatable '/tmp/a.svg') $true  'svg is truncatable'
+Assert-Eq (Test-RogueReadCaptureTruncatable '/tmp/A.SVG') $true  'truncatable test is case-insensitive'
+Assert-Eq (Test-RogueReadCaptureTruncatable '/tmp/a.pdf') $false 'pdf is not truncatable'
+Assert-Eq (Test-RogueReadCaptureTruncatable '/tmp/noext') $false 'a file with no extension is not truncatable'
+
 # ── Add-FileReadBytes ────────────────────────────────────────────────────
 $dir = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString())
 New-Item -ItemType Directory -Path $dir | Out-Null
@@ -111,25 +117,43 @@ if (Get-Command jq -ErrorAction SilentlyContinue) {
 # body carries no file_path and returns at the second gate. It stays for
 # lockstep with Add-FilePreImage and hook.sh, where it is reachable.
 
-# ── Truncation at the cap ────────────────────────────────────────────────
+# ── Over the cap: skipped for a non-truncatable type ────────────────────
 $big = Join-Path $dir 'big.pdf'
 $bytes = New-Object byte[] (1048576 + 10)
 for ($i = 0; $i -lt $bytes.Length; $i++) { $bytes[$i] = 0x61 }
+[System.IO.File]::WriteAllBytes($big, $bytes)
+$bigBody = '{"content":"","file_path":"' + $big.Replace('\','\\') + '"}'
+Assert-Eq (Add-FileReadBytes $bigBody) $bigBody 'an over-cap pdf leaves the body untouched'
+
+# ── Over the cap: still truncated for a truncatable type ────────────────
+# The other half of the split. Without this, the assertion above would also
+# pass if the capture were disabled wholesale.
+$bigSvg = Join-Path $dir 'big.svg'
 # Distinguishable ends. With a uniform fill, reading the LAST 1 MiB would pass
 # a length-only assertion identically.
 $bytes[0] = 0x02
 $bytes[$bytes.Length - 1] = 0x03
-[System.IO.File]::WriteAllBytes($big, $bytes)
-$bigBody = '{"content":"","file_path":"' + $big.Replace('\','\\') + '"}'
-$bigOut = Add-FileReadBytes $bigBody
+[System.IO.File]::WriteAllBytes($bigSvg, $bytes)
+$bigSvgBody = '{"content":"","file_path":"' + $bigSvg.Replace('\','\\') + '"}'
+$bigOut = Add-FileReadBytes $bigSvgBody
 # A local match, not the ambient $Matches: a failed -match would leave the
 # previous case's capture in place and these assertions would read it.
 $bigMatch = [regex]::Match($bigOut, '"rogueFileReadB64":"([^"]*)"')
-Assert-Eq $bigMatch.Success $true 'over-cap file still attaches a field'
+Assert-Eq $bigMatch.Success $true 'an over-cap svg still attaches a field'
 $bigDecoded = [Convert]::FromBase64String($bigMatch.Groups[1].Value)
-Assert-Eq $bigDecoded.Length 1048576 'over-cap file is truncated to the cap'
+Assert-Eq $bigDecoded.Length 1048576 'an over-cap svg is truncated to the cap'
 Assert-Eq $bigDecoded[0] ([byte]0x02) 'the truncation keeps the FIRST bytes (a prefix, not the tail)'
 Assert-Eq $bigDecoded[$bigDecoded.Length - 1] ([byte]0x61) 'the file last byte is not in the prefix'
+
+# ── At the cap: sent whole ──────────────────────────────────────────────
+# One byte of slack in the comparison would turn this into a skip.
+$atCap = Join-Path $dir 'atcap.pdf'
+[System.IO.File]::WriteAllBytes($atCap, (New-Object byte[] 1048576))
+$atCapBody = '{"content":"","file_path":"' + $atCap.Replace('\','\\') + '"}'
+$atCapMatch = [regex]::Match((Add-FileReadBytes $atCapBody), '"rogueFileReadB64":"([^"]*)"')
+Assert-Eq $atCapMatch.Success $true 'a pdf exactly AT the cap still attaches a field'
+Assert-Eq ([Convert]::FromBase64String($atCapMatch.Groups[1].Value)).Length 1048576 `
+    'a pdf exactly AT the cap is sent whole'
 
 # ── The cap constant matches hook.sh ────────────────────────────────────
 Assert-Eq $RogueFileReadMaxBytes 1048576 'cap constant is 1 MiB'

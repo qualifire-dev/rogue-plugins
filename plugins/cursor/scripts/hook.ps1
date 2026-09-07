@@ -425,9 +425,9 @@ function Add-FilePreImage {
 # ── File read capture (beforeReadFile only), lockstep with hook.sh ─────────
 # Cursor sends `beforeReadFile` with an empty `content` for some file types.
 # Attach the file's own bytes as `rogueFileReadB64` so the request carries the
-# file and not just its path. Over the cap the bytes are truncated, not skipped
-# (the pre-image does the opposite). Every failure path returns the body
-# unchanged.
+# file and not just its path. Over the cap a truncatable type is truncated and
+# every other type is skipped, as the pre-image does. Every failure path
+# returns the body unchanged.
 $RogueFileReadMaxBytes = 1048576
 
 function Test-RogueReadCapturePath {
@@ -436,6 +436,16 @@ function Test-RogueReadCapturePath {
     $ext = [System.IO.Path]::GetExtension($Path)
     if (-not $ext) { return $false }
     return @('.pdf', '.svg') -contains $ext.ToLowerInvariant()
+}
+
+# Extensions whose bytes stay usable when they are cut short. An over-cap file
+# NOT on this list is sent whole or not at all, as the pre-image does.
+function Test-RogueReadCaptureTruncatable {
+    param([string]$Path)
+    if (-not $Path) { return $false }
+    $ext = [System.IO.Path]::GetExtension($Path)
+    if (-not $ext) { return $false }
+    return @('.svg') -contains $ext.ToLowerInvariant()
 }
 
 function Add-FileReadBytes {
@@ -460,10 +470,14 @@ function Add-FileReadBytes {
 
         $len = (Get-Item -LiteralPath $fp).Length
         if ($len -le 0) { return $Body }
-        $take = [int][Math]::Min([int64]$len, [int64]$RogueFileReadMaxBytes)
         if ($len -gt $RogueFileReadMaxBytes) {
+            if (-not (Test-RogueReadCaptureTruncatable $fp)) {
+                Dbg "read capture $len B over cap -> sending none"
+                return $Body
+            }
             Dbg "read capture $len B -> truncating to $RogueFileReadMaxBytes"
         }
+        $take = [int][Math]::Min([int64]$len, [int64]$RogueFileReadMaxBytes)
         # Streamed rather than ReadAllBytes so an over-cap file is not fully
         # loaded just to discard most of it.
         $buf = New-Object byte[] $take
