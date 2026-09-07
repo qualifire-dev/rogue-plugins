@@ -32,7 +32,7 @@ $env:KIRO_STATE   = $state
 # with the real CLI's not-logged-in error when KIRO_FAKE_CREATE_FAILS is set;
 # `agent set-default X` records the choice. A .ps1 resolves by bare name from
 # PATH on Windows; on Linux/macOS a sh shim beside it does.
-$fakeCli = Join-Path $bin 'kiro-cli.ps1'
+$fakeCli = Join-Path $bin 'kiro-cli-fixture.ps1'
 @'
 param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Argv)
 Add-Content -LiteralPath $env:KIRO_CLI_LOG -Value ($Argv -join ' ')
@@ -62,7 +62,12 @@ if ($sub -eq 'settings chat.defaultAgent') {
 }
 exit 0
 '@ | Set-Content -LiteralPath $fakeCli -Encoding UTF8
-if ($env:OS -ne 'Windows_NT') {
+if ($env:OS -eq 'Windows_NT') {
+    # A child process, like the real executable: Console.Error from an in-process
+    # .ps1 bypasses PowerShell's error stream and cannot exercise stderr capture.
+    [System.IO.File]::WriteAllText((Join-Path $bin 'kiro-cli.cmd'),
+        "@echo off`r`npowershell.exe -NoProfile -File `"$fakeCli`" %*`r`nexit /b %errorlevel%`r`n")
+} else {
     $shim = Join-Path $bin 'kiro-cli'
     [System.IO.File]::WriteAllText($shim, "#!/bin/sh`nexec pwsh -NoProfile -File `"$fakeCli`" `"`$@`"`n")
     & chmod +x $shim
