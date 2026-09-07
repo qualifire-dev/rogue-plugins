@@ -99,6 +99,11 @@ jobs:
           TEST_SH=dash bash tests/test_actor_sh.sh
           TEST_SH=dash bash tests/test_install_id_sh.sh
           TEST_SH=dash bash tests/test_status_skill_sh.sh
+          # Kiro has no slash-command surface, so its status command is a script
+          # rather than a skill document; both shells, since a developer runs it
+          # by hand under bash and a managed rollout verifies under /bin/sh.
+          TEST_SH=dash bash tests/test_status_kiro_sh.sh
+          TEST_SH=bash bash tests/test_status_kiro_sh.sh
           bash tests/test_plugin_versions_sh.sh
           # Twice, because hooks.json fires auto-update.sh as `sh <script>` - an
           # explicit interpreter overrides its bash shebang, so production really
@@ -111,6 +116,16 @@ jobs:
           TEST_SH=bash bash tests/test_setup_env.sh
           SH=bash bash tests/test_hook_sh_cursor.sh
           TEST_SH=dash bash tests/test_hook_sh_cursor.sh
+      - name: Kiro installer (temp HOME, fake kiro-cli)
+        # install.sh --kiro is the only installer that WRITES the vendor's hook
+        # wiring itself (a hook file, Crew wrappers, a merge into every agent
+        # config, a rogue agent through kiro-cli) instead of delegating to a
+        # plugin CLI, and a wrong file is silent: Kiro loads nothing. Runs the
+        # real installer under a temporary HOME with a fake curl serving a
+        # locally built tarball and a fake kiro-cli recording its calls; both
+        # default-agent branches of ADR 0001 are asserted. Needs node (the
+        # agent-config merge) and python3 (the assertions), both on the runner.
+        run: bash tests/test_install_kiro_sh.sh
       - name: Command and skill snippets parse
         # Every fenced sh/bash and powershell block in a /rogue:setup or /rogue:status
         # document is RUN VERBATIM by the agent when a user invokes the command, so a
@@ -192,7 +207,9 @@ jobs:
         # gate an edit to scripts/shared/ that was never propagated ships five stale
         # copies, and an edit made directly to a plugin's copy is silently reverted by
         # the next sync — neither is visible in review.
-        run: bash scripts/sync-shared-scripts.sh --check
+        run: |
+          bash scripts/sync-shared-scripts.sh --check
+          bash tests/test_env_file_trust.sh
 
       - name: Hook-log contract (sh + mjs dispatchers)
         # The per-agent log file, line format and rotation policy are duplicated
@@ -204,6 +221,14 @@ jobs:
           set -euo pipefail
           SH=dash sh tests/test_hook_logs.sh
           SH=bash bash tests/test_hook_logs.sh
+
+      - name: Gemini dispatcher contract (node)
+        # The only suite that exercises hook.mjs end to end against a real server,
+        # and until now the only dispatcher suite CI never ran — the file existed
+        # and nothing invoked it. It carries the subagent-attribution rules, whose
+        # failure mode is a WRONG x-rogue-agent-id on a main-agent tool row: a
+        # false attribution in an audit trail, which no other gate can see.
+        run: node --test tests/test_hook_mjs.mjs
 
       - name: Log-shipper contract (sh)
         # The shipper is a byte-offset state machine over a file another process is
@@ -231,6 +256,17 @@ jobs:
           set -euo pipefail
           SH=dash sh tests/test_heartbeat_sh.sh
           SH=bash bash tests/test_heartbeat_sh.sh
+
+      - name: Kiro bridge end to end (mock server)
+        # Kiro's decision is the bridge's EXIT CODE (PreToolUse block = exit 2)
+        # rather than a relayed body, so unlike the other dispatcher e2e suites
+        # this one is the only automated check of the enforcement itself, and it
+        # runs here. It needs python3 + curl only (readiness is probed with curl,
+        # not nc). Both shells: dash is what Kiro's `sh` resolves to on Linux.
+        run: |
+          set -euo pipefail
+          TEST_SH=dash bash tests/test_hook_sh_kiro.sh
+          TEST_SH=bash bash tests/test_hook_sh_kiro.sh
 
       - name: Log-shipper end to end (real HTTP)
         # The contract suite above stubs `curl`, so it can only assert what the
@@ -312,11 +348,15 @@ jobs:
           pwsh -NoProfile -File tests/test_hook_ps1_copilot.ps1
           pwsh -NoProfile -File tests/test_hook_ps1_cursor.ps1
           pwsh -NoProfile -File tests/test_hook_ps1_antigravity.ps1
+          pwsh -NoProfile -File tests/test_hook_ps1_kiro.ps1
           pwsh -NoProfile -File tests/test_hook_logs.ps1
           pwsh -NoProfile -File tests/test_ship_logs.ps1
           pwsh -NoProfile -File tests/test_heartbeat_ps1.ps1
           pwsh -NoProfile -File tests/test_auto_update_ps1.ps1
           pwsh -NoProfile -File tests/test_setup_env.ps1
+          pwsh -NoProfile -File tests/test_env_file_trust.ps1
+          pwsh -NoProfile -File tests/test_install_kiro_ps1.ps1
+          pwsh -NoProfile -File tests/test_status_kiro_ps1.ps1
 
   windows:
     # The job the seam CANNOT stand in for. Every PowerShell test in the job above
@@ -361,6 +401,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
           powershell -NoProfile -File tests/test_hook_ps1_antigravity.ps1
           if ($LASTEXITCODE -ne 0) { exit 1 }
+          powershell -NoProfile -File tests/test_hook_ps1_kiro.ps1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
           powershell -NoProfile -File tests/test_hook_logs.ps1
           if ($LASTEXITCODE -ne 0) { exit 1 }
           powershell -NoProfile -File tests/test_ship_logs.ps1
@@ -370,4 +412,10 @@ jobs:
           powershell -NoProfile -File tests/test_auto_update_ps1.ps1
           if ($LASTEXITCODE -ne 0) { exit 1 }
           powershell -NoProfile -File tests/test_setup_env.ps1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          powershell -NoProfile -File tests/test_env_file_trust.ps1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          powershell -NoProfile -File tests/test_install_kiro_ps1.ps1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          powershell -NoProfile -File tests/test_status_kiro_ps1.ps1
           if ($LASTEXITCODE -ne 0) { exit 1 }

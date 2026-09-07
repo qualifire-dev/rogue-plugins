@@ -1,5 +1,24 @@
 #!/usr/bin/env sh
 
+# Only the current user or root may supply executable configuration. System
+# configuration must belong to root; neither group nor other may write it.
+rogue_env_is_trusted() (
+  [ -f "$1" ] && [ -r "$1" ] || exit 1
+  info=$(stat -Lc '%u %a' "$1" 2>/dev/null) || info=$(stat -Lf '%u %Lp' "$1" 2>/dev/null) || exit 1
+  owner=${info%% *}; mode=${info#* }
+  case "$owner:$mode" in *[!0-9:]*|:*) exit 1 ;; esac
+  case "$1:${2:-0}" in /etc/rogue/env:*|*:1) [ "$owner" = 0 ] || exit 1 ;; esac
+  [ "$owner" = 0 ] || [ "$owner" = "$(id -u)" ] || exit 1
+  [ "$((0$mode & 022))" = 0 ]
+)
+
+rogue_source_env() {
+  if rogue_env_is_trusted "$1" "${2:-0}"; then
+    . "$1"
+  fi
+  return 0
+}
+
 rogue_env_quote() {
   printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
 }

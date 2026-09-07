@@ -2,7 +2,7 @@
 set -euo pipefail
 # Print the per-plugin version manifest as JSON.
 #
-# THIS IS THE ONLY PLACE THE SIX VERSION FILES ARE READ. build-release.sh calls
+# THIS IS THE ONLY PLACE THE SEVEN VERSION FILES ARE READ. build-release.sh calls
 # it once and derives every per-tarball echo from the result, so the manifest
 # attached to a release and the tarballs beside it cannot disagree. Reading a
 # version file twice is exactly how they would.
@@ -75,6 +75,16 @@ CURSOR_V=$(read_json_version "plugins/cursor/.cursor-plugin/plugin.json")
 COPILOT_V=$(read_json_version "plugins/copilot/plugin.json")
 GEMINI_V=$(read_json_version "plugins/gemini/gemini-extension.json")
 ANTIGRAVITY_V=$(read_plain_version "plugins/antigravity/VERSION")
+# Kiro carries both: plugin.json is the version of record (install-id.sh,
+# hook.ps1 and heartbeat.ps1 all read it there) and a bare VERSION file beside
+# it for operators and the release page. Two files is one drift waiting to
+# happen, so this refuses to publish while they disagree rather than pick one.
+KIRO_V=$(read_json_version "plugins/kiro/plugin.json")
+KIRO_FILE_V=$(read_plain_version "plugins/kiro/VERSION")
+if [ "$KIRO_V" != "$KIRO_FILE_V" ]; then
+  echo "✗ plugins/kiro: plugin.json says $KIRO_V but VERSION says $KIRO_FILE_V" >&2
+  exit 1
+fi
 
 cat <<JSON
 {
@@ -85,7 +95,8 @@ cat <<JSON
     "cursor": "$CURSOR_V",
     "copilot": "$COPILOT_V",
     "gemini": "$GEMINI_V",
-    "antigravity": "$ANTIGRAVITY_V"
+    "antigravity": "$ANTIGRAVITY_V",
+    "kiro": "$KIRO_V"
   }
 }
 JSON
