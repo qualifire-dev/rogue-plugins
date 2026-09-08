@@ -236,7 +236,13 @@ $job = Start-Job -ScriptBlock {
     [System.IO.File]::WriteAllText([System.IO.Path]::Combine($dir, ($child + '.jsonl')), '')
 } -ArgumentList $h, $SLUG, $parentW, $childW
 $r = Resolve-RogueParentSession (New-Payload $childW)
-Receive-Job $job -Wait -AutoRemoveJob | Out-Null
+# Wait/Receive/Remove rather than `Receive-Job -Wait -AutoRemoveJob`, which is
+# valid only for custom job types: on a plain background job Windows PowerShell
+# 5.1 takes the job-persistence path and throws "The Persistence Path does not
+# exist." pwsh 7 tolerates it, so only the 5.1 job catches this.
+Wait-Job $job | Out-Null
+Receive-Job $job | Out-Null
+Remove-Job $job | Out-Null
 Assert-Eq $r.Parent $parentW 'live marker: waited and resolved once the file appeared'
 Assert-Eq $r.Child $childW 'mid-wait resolution carries the child id'
 
