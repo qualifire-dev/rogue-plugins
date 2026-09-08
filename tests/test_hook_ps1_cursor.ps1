@@ -236,13 +236,14 @@ $job = Start-Job -ScriptBlock {
     [System.IO.File]::WriteAllText([System.IO.Path]::Combine($dir, ($child + '.jsonl')), '')
 } -ArgumentList $h, $SLUG, $parentW, $childW
 $r = Resolve-RogueParentSession (New-Payload $childW)
-# Wait/Receive/Remove rather than `Receive-Job -Wait -AutoRemoveJob`, which is
-# valid only for custom job types: on a plain background job Windows PowerShell
-# 5.1 takes the job-persistence path and throws "The Persistence Path does not
-# exist." pwsh 7 tolerates it, so only the 5.1 job catches this.
+# Wait, then discard. Receive-Job is NOT called: on the Windows PowerShell 5.1
+# runner it throws "The Persistence Path does not exist." whatever arguments it
+# is given, and $ErrorActionPreference = 'Stop' turns that into a dead suite.
+# Nothing here needs the job's output, only its side effect (the file), which
+# the assertions below cover. Start-Job and Wait-Job are fine; teardown is
+# best-effort so a job-subsystem quirk can never fail a passing test.
 Wait-Job $job | Out-Null
-Receive-Job $job | Out-Null
-Remove-Job $job | Out-Null
+try { Remove-Job $job -Force -ErrorAction SilentlyContinue } catch { }
 Assert-Eq $r.Parent $parentW 'live marker: waited and resolved once the file appeared'
 Assert-Eq $r.Child $childW 'mid-wait resolution carries the child id'
 
