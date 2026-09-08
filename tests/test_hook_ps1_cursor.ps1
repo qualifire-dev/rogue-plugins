@@ -236,7 +236,14 @@ $job = Start-Job -ScriptBlock {
     [System.IO.File]::WriteAllText([System.IO.Path]::Combine($dir, ($child + '.jsonl')), '')
 } -ArgumentList $h, $SLUG, $parentW, $childW
 $r = Resolve-RogueParentSession (New-Payload $childW)
-Receive-Job $job -Wait -AutoRemoveJob | Out-Null
+# Wait, then discard. Receive-Job is NOT called: on the Windows PowerShell 5.1
+# runner it throws "The Persistence Path does not exist." whatever arguments it
+# is given, and $ErrorActionPreference = 'Stop' turns that into a dead suite.
+# Nothing here needs the job's output, only its side effect (the file), which
+# the assertions below cover. Start-Job and Wait-Job are fine; teardown is
+# best-effort so a job-subsystem quirk can never fail a passing test.
+Wait-Job $job | Out-Null
+try { Remove-Job $job -Force -ErrorAction SilentlyContinue } catch { }
 Assert-Eq $r.Parent $parentW 'live marker: waited and resolved once the file appeared'
 Assert-Eq $r.Child $childW 'mid-wait resolution carries the child id'
 
@@ -245,6 +252,137 @@ $h = New-TestHome
 Assert-Null (Resolve-RogueParentSession '{"conversation_id":"../../etc/passwd"}') 'a traversal-shaped id resolves to nothing'
 Assert-Null (Resolve-RogueParentSession 'not json at all') 'an unparseable payload resolves to nothing'
 Assert-Null (Resolve-RogueParentSession '{}') 'a payload with no conversation_id resolves to nothing'
+
+# --- File read capture (beforeReadFile) -----------------------------------
+# Add-FileReadBytes attaches the file's own bytes as rogueFileReadB64 when the
+# payload's `content` is empty. Same lockstep rule as the block above: every
+# case here has a case in tests/test_hook_sh_cursor.sh.
+
+# Extension allowlist.
+Assert-True (Test-RogueReadCapturePath '/tmp/a.pdf') 'pdf is captured'
+Assert-True (Test-RogueReadCapturePath '/tmp/A.PDF') 'the extension test is case-insensitive'
+Assert-True (Test-RogueReadCapturePath '/tmp/a.svg') 'svg is captured'
+Assert-True (-not (Test-RogueReadCapturePath '/tmp/a.png')) 'png is not captured'
+Assert-True (-not (Test-RogueReadCapturePath '/tmp/a.txt')) 'txt is not captured'
+Assert-True (-not (Test-RogueReadCapturePath '/tmp/noext')) 'a file with no extension is not captured'
+Assert-True (-not (Test-RogueReadCapturePath '/tmp/a.pdf.gz')) 'only the LAST extension counts'
+
+# The truncatable subset. Over the cap, only these are cut short; every other
+# allowlisted type attaches nothing at all.
+Assert-True (Test-RogueReadCaptureTruncatable '/tmp/a.svg') 'svg is truncatable'
+Assert-True (Test-RogueReadCaptureTruncatable '/tmp/A.SVG') 'the truncatable test is case-insensitive'
+Assert-True (-not (Test-RogueReadCaptureTruncatable '/tmp/a.pdf')) 'pdf is not truncatable'
+Assert-True (-not (Test-RogueReadCaptureTruncatable '/tmp/noext')) 'a file with no extension is not truncatable'
+
+$dir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(),
+    'rogue-cursor-read-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $dir -Force | Out-Null
+
+$pdf = [System.IO.Path]::Combine($dir, 'spec.pdf')
+[System.IO.File]::WriteAllBytes($pdf, [byte[]](0x25,0x50,0x44,0x46,0x2D,0x31,0x2E,0x34))
+$expected = [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($pdf))
+
+$esc = $pdf.Replace('\', '\\')
+$body = '{"content":"","file_path":"' + $esc + '"}'
+# The WHOLE body is asserted, because a filter that dropped `content` or
+# `file_path` while still appending would pass a field-only assertion.
+$expectedBody = '{"content":"","file_path":"' + $esc + '","rogueFileReadB64":"' + $expected + '"}'
+Assert-Eq (Add-FileReadBytes $body) $expectedBody 'the field is appended and the rest of the body survives'
+
+$busy = '{"content":"already here","file_path":"' + $esc + '"}'
+Assert-Eq (Add-FileReadBytes $busy) $busy 'non-empty content leaves the body untouched'
+
+$png = [System.IO.Path]::Combine($dir, 'i.png')
+[System.IO.File]::WriteAllBytes($png, [byte[]](1,2,3))
+$pngBody = '{"content":"","file_path":"' + $png.Replace('\', '\\') + '"}'
+Assert-Eq (Add-FileReadBytes $pngBody) $pngBody 'an extension outside the allowlist leaves the body untouched'
+
+$missing = '{"content":"","file_path":"' + ([System.IO.Path]::Combine($dir, 'nope.pdf')).Replace('\', '\\') + '"}'
+Assert-Eq (Add-FileReadBytes $missing) $missing 'a missing file leaves the body untouched'
+
+$emptyFile = [System.IO.Path]::Combine($dir, 'empty.pdf')
+[System.IO.File]::WriteAllBytes($emptyFile, [byte[]]@())
+$emptyBody = '{"content":"","file_path":"' + $emptyFile.Replace('\', '\\') + '"}'
+Assert-Eq (Add-FileReadBytes $emptyBody) $emptyBody 'a zero-byte file leaves the body untouched'
+
+$rel = '{"content":"","file_path":"relative/x.pdf"}'
+Assert-Eq (Add-FileReadBytes $rel) $rel 'a relative path leaves the body untouched'
+
+# --- jq path == concat path -----------------------------------------------
+# Only one of the two runs on a given machine. Both GitHub runner images ship
+# jq and a typical Windows Cursor box has none, so emptying PATH is the only
+# way to cover the concat half here.
+function Invoke-WithoutJq {
+    # NOT named $Body: `& $Action` resolves the scriptblock's free variables
+    # against THIS scope first, so that name would shadow the caller's $body and
+    # the scriptblock would pass itself.
+    param([scriptblock]$Action)
+    $rogueSavedPath = $env:PATH
+    try { $env:PATH = ''; & $Action } finally { $env:PATH = $rogueSavedPath }
+}
+Assert-Null (Invoke-WithoutJq { Get-Command jq -ErrorAction SilentlyContinue }) 'emptying PATH really does hide jq'
+
+$concat = Invoke-WithoutJq { Add-FileReadBytes $body }
+Assert-Eq $concat $expectedBody 'concat path emits the documented bytes'
+
+# Exactly ONE closing brace is stripped: a TrimEnd would eat both and corrupt a
+# body whose last value is a nested object.
+$nested = '{"content":"","file_path":"' + $esc + '","meta":{"a":1}}'
+$nestedExpected = '{"content":"","file_path":"' + $esc + '","meta":{"a":1},"rogueFileReadB64":"' + $expected + '"}'
+$nestedConcat = Invoke-WithoutJq { Add-FileReadBytes $nested }
+Assert-Eq $nestedConcat $nestedExpected 'concat path keeps a nested object at the end of the body'
+
+$trailing = $body + "`n  "
+Assert-Eq (Invoke-WithoutJq { Add-FileReadBytes $trailing }) $expectedBody 'concat path trims trailing whitespace before the brace strip'
+
+Assert-Eq (Invoke-WithoutJq { Add-FileReadBytes 'not json at all' }) 'not json at all' 'concat path leaves a body with no closing brace alone'
+
+if (Get-Command jq -ErrorAction SilentlyContinue) {
+    Assert-Eq (Add-FileReadBytes $body) $concat 'jq and concat agree byte for byte'
+    Assert-Eq (Add-FileReadBytes $nested) $nestedConcat 'jq and concat agree on a nested-object body'
+} else {
+    Write-Host '  skip: jq not installed, jq path not exercised'
+}
+
+# --- Over the cap ---------------------------------------------------------
+$bytes = New-Object byte[] ($RogueFileReadMaxBytes + 10)
+for ($i = 0; $i -lt $bytes.Length; $i++) { $bytes[$i] = 0x61 }
+
+$big = [System.IO.Path]::Combine($dir, 'big.pdf')
+[System.IO.File]::WriteAllBytes($big, $bytes)
+$bigBody = '{"content":"","file_path":"' + $big.Replace('\', '\\') + '"}'
+Assert-Eq (Add-FileReadBytes $bigBody) $bigBody 'an over-cap non-truncatable type attaches nothing'
+
+# The other half of the split: without this, the assertion above would pass
+# just as well if the capture were disabled wholesale.
+$bigSvg = [System.IO.Path]::Combine($dir, 'big.svg')
+# Distinguishable first and last bytes. With a uniform fill, reading the LAST
+# cap-worth of bytes would satisfy a length-only assertion identically.
+$bytes[0] = 0x02
+$bytes[$bytes.Length - 1] = 0x03
+[System.IO.File]::WriteAllBytes($bigSvg, $bytes)
+$bigSvgBody = '{"content":"","file_path":"' + $bigSvg.Replace('\', '\\') + '"}'
+# A local match, not the ambient $Matches: a failed -match would leave the
+# previous case's capture in place and these assertions would read that.
+$bigMatch = [regex]::Match((Add-FileReadBytes $bigSvgBody), '"rogueFileReadB64":"([^"]*)"')
+Assert-True $bigMatch.Success 'an over-cap truncatable type still attaches a field'
+$bigDecoded = [Convert]::FromBase64String($bigMatch.Groups[1].Value)
+Assert-Eq $bigDecoded.Length 1048576 'an over-cap truncatable type is cut at the cap'
+Assert-Eq $bigDecoded[0] ([byte]0x02) 'the cut keeps the FIRST bytes (a prefix, not the tail)'
+Assert-Eq $bigDecoded[$bigDecoded.Length - 1] ([byte]0x61) 'the file last byte is not in the prefix'
+
+# --- Exactly at the cap ---------------------------------------------------
+# One byte of slack in the dispatcher's comparison would turn this into a skip.
+$atCap = [System.IO.Path]::Combine($dir, 'atcap.pdf')
+[System.IO.File]::WriteAllBytes($atCap, (New-Object byte[] 1048576))
+$atCapBody = '{"content":"","file_path":"' + $atCap.Replace('\', '\\') + '"}'
+$atCapMatch = [regex]::Match((Add-FileReadBytes $atCapBody), '"rogueFileReadB64":"([^"]*)"')
+Assert-True $atCapMatch.Success 'a non-truncatable type exactly AT the cap still attaches a field'
+Assert-Eq ([Convert]::FromBase64String($atCapMatch.Groups[1].Value)).Length 1048576 'a file exactly AT the cap is sent whole'
+
+Assert-Eq $RogueFileReadMaxBytes 1048576 'cap constant is 1 MiB'
+
+Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
 
 # ── teardown ───────────────────────────────────────────────────────────────
 foreach ($d in $homes) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }

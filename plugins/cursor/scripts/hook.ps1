@@ -427,6 +427,104 @@ function Add-FilePreImage {
     }
 }
 
+# ── File read capture (beforeReadFile only), lockstep with hook.sh ─────────
+# Cursor sends `beforeReadFile` with an empty `content` for some file types.
+# Attach the file's own bytes as `rogueFileReadB64` so the request carries the
+# file and not just its path. Over the cap a truncatable type is truncated and
+# every other type is skipped, as the pre-image does. Every failure path
+# returns the body unchanged.
+$RogueFileReadMaxBytes = 1048576
+
+function Test-RogueReadCapturePath {
+    param([string]$Path)
+    if (-not $Path) { return $false }
+    $ext = [System.IO.Path]::GetExtension($Path)
+    if (-not $ext) { return $false }
+    return @('.pdf', '.svg') -contains $ext.ToLowerInvariant()
+}
+
+# Extensions whose bytes stay usable when they are cut short. An over-cap file
+# NOT on this list is sent whole or not at all, as the pre-image does.
+function Test-RogueReadCaptureTruncatable {
+    param([string]$Path)
+    if (-not $Path) { return $false }
+    $ext = [System.IO.Path]::GetExtension($Path)
+    if (-not $ext) { return $false }
+    return @('.svg') -contains $ext.ToLowerInvariant()
+}
+
+function Add-FileReadBytes {
+    # No ConvertTo-Json on the whole payload, as in Add-FilePreImage: a parse
+    # and reserialize could alter the vendor's JSON, and -Depth truncates.
+    param([string]$Body)
+    try {
+        # Get-RogueJsonStringField trims and the sh side's _json_string_field
+        # does not, so a whitespace-only content fires here but not there.
+        $content = Get-RogueJsonStringField $Body '.content' 'content'
+        if ($content) { return $Body }
+
+        $fp = Get-RogueJsonStringField $Body '.file_path // .tool_input.file_path' 'file_path'
+        if (-not $fp) { return $Body }
+        # Rooted paths only; a relative one would resolve against the hook's cwd.
+        # Looser than Add-FilePreImage's Windows-shaped test on purpose: an
+        # over-matching path here falls through to Test-Path and attaches
+        # nothing, where the pre-image would report a real file as absent.
+        if (-not [System.IO.Path]::IsPathRooted($fp)) { return $Body }
+        if (-not (Test-RogueReadCapturePath $fp)) { return $Body }
+        if (-not (Test-Path -LiteralPath $fp -PathType Leaf)) { return $Body }
+
+        $len = (Get-Item -LiteralPath $fp).Length
+        if ($len -le 0) { return $Body }
+        if ($len -gt $RogueFileReadMaxBytes) {
+            if (-not (Test-RogueReadCaptureTruncatable $fp)) {
+                Dbg "read capture $len B over cap -> sending none"
+                return $Body
+            }
+            Dbg "read capture $len B -> truncating to $RogueFileReadMaxBytes"
+        }
+        $take = [int][Math]::Min([int64]$len, [int64]$RogueFileReadMaxBytes)
+        # Streamed rather than ReadAllBytes so an over-cap file is not fully
+        # loaded just to discard most of it.
+        $buf = New-Object byte[] $take
+        $read = 0
+        # FileShare ReadWrite, as in Add-FilePreImage. This fires on a READ, so
+        # the editor is very likely holding the file and the default share mode
+        # would throw and lose the capture.
+        $fs = [System.IO.File]::Open($fp, 'Open', 'Read', 'ReadWrite')
+        try {
+            while ($read -lt $take) {
+                $n = $fs.Read($buf, $read, $take - $read)
+                if ($n -le 0) { break }
+                $read += $n
+            }
+        } finally { $fs.Dispose() }
+        if ($read -le 0) { return $Body }
+        # A range index yields Object[] and ToBase64String takes byte[]. Cast
+        # rather than rely on coercion, since 5.1 is the shipping runtime.
+        if ($read -lt $take) { $buf = [byte[]]$buf[0..($read - 1)] }
+        $b64 = [Convert]::ToBase64String($buf)
+        if (-not $b64) { return $Body }
+        Dbg "read capture attached for $fp ($($b64.Length) b64 chars)"
+
+        # jq-or-concat, as in Add-FilePreImage. The base64 goes to jq as one
+        # argument, and Windows caps a command line at 32,767 characters
+        # (~24 KiB of file), so Invoke-RogueJq yields nothing and the concat
+        # below is what runs. It is not dead code.
+        $out = Invoke-RogueJq $Body @('-c', '--arg', 'b64', $b64, '. + {rogueFileReadB64:$b64}')
+        if ($out -and $out.StartsWith('{') -and $out.EndsWith('}')) { return $out }
+
+        $trimmed = $Body.TrimEnd()
+        if (-not $trimmed.EndsWith('}')) { return $Body }
+        $p = $trimmed.Substring(0, $trimmed.Length - 1)
+        $sep = ','
+        if ($p -eq '{') { $sep = '' }
+        return $p + $sep + '"rogueFileReadB64":"' + $b64 + '"}'
+    } catch {
+        Dbg "read capture failed: $($_.Exception.Message)"
+        return $Body
+    }
+}
+
 # ── Subagent -> parent session attribution — lockstep with hook.sh ─────────
 # A Cursor subagent's preToolUse / postToolUse / afterFileEdit /
 # beforeShellExecution all arrive with conversation_id == session_id == THE
@@ -786,10 +884,10 @@ $payload = $payload.TrimStart([char]0xFEFF)
 # which happens on clients with a non-UTF-8 Windows locale (out of our control).
 $payload = Repair-DoubleEncodedUtf8 $payload
 
-# File pre-image (see Add-FilePreImage) — the one place this dispatcher adds to
-# the vendor payload. It only ever appends a field; a failure leaves the body
-# byte-identical.
+# The two places this dispatcher adds to the vendor payload. Both only ever
+# append a field; a failure leaves the body byte-identical.
 if ($EventName -eq 'preToolUse') { $payload = Add-FilePreImage $payload }
+if ($EventName -eq 'beforeReadFile') { $payload = Add-FileReadBytes $payload }
 
 # Only the events a subagent actually fires resolve. sessionStart / sessionEnd /
 # subagentStart / subagentStop are parent-side: they already carry the parent's

@@ -23,7 +23,9 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 HOOK="$REPO/plugins/cursor/scripts/hook.sh"
-SH="${TEST_SH:-sh}"
+# TEST_SH wins, then an exported SH, so validate.yml's two lines (SH=bash and
+# TEST_SH=dash) drive two different shells rather than `sh` twice.
+SH="${TEST_SH:-${SH:-sh}}"
 
 PORT=$((RANDOM % 10000 + 30000))
 HEADERS_FILE="$(mktemp)"
@@ -436,6 +438,203 @@ assert_header "x-rogue-parent-session-id" "$PARENT_J" "resolved without jq (anch
 assert_header "x-rogue-agent-id"          "$CHILD_J"  "child id read without jq"
 assert_body_identical "no-jq body posted byte-identical to stdin"
 rm -rf "$NOJQ_DIR"; NOJQ_DIR=""
+
+# ── File read capture (beforeReadFile) ─────────────────────────────────────
+# The second body exception, and the only one on beforeReadFile: when Cursor
+# sends an empty `content`, the dispatcher attaches the file's own bytes as
+# `rogueFileReadB64`. Case 12's "ONE exception" claim is about preToolUse, which
+# still adds nothing but the pre-image. The capture is capped at 1048576 bytes;
+# over the cap a truncatable extension is cut to the cap and every other one
+# attaches nothing. Every failure path leaves the body untouched.
+
+# One top-level field of the last POSTed body ('' when absent).
+posted_field() {
+  posted_body | python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1],""))' "$1"
+}
+
+# Is a top-level field PRESENT ('yes'/'no')? Absence assertions need this:
+# posted_field answers '' both for an absent key and for a present-but-empty
+# one, so it cannot fail against a dispatcher that attaches an empty value.
+posted_has_field() {
+  posted_body | python3 -c 'import json,sys; print("yes" if sys.argv[1] in json.load(sys.stdin) else "no")' "$1"
+}
+
+# $1 file path: a beforeReadFile payload whose `content` is empty.
+read_payload() {
+  printf '{"content":"","file_path":"%s"}' "$1"
+}
+
+# $1 path: cap + 10 bytes, with a marker in the bytes past the cap.
+make_over_cap_file() {
+  awk 'BEGIN{while(i++<1048576)printf "a"}' > "$1"
+  printf 'TAILMARKER' >> "$1"
+}
+
+# $1 field: the decoded byte count of a base64 field on the last POSTed body.
+decoded_size() {
+  printf '%s' "$(posted_field "$1")" | base64 -d 2>/dev/null | wc -c | tr -d ' '
+}
+
+b64_of() { base64 < "$1" | tr -d '\r\n'; }
+
+HOMER="$(new_home)"
+FIX="$HOMER/fixtures"
+mkdir -p "$FIX"
+
+# ── Case 17: empty content -> the file's bytes ride as rogueFileReadB64 ────
+restart_mock '{}'
+PDF_FILE="$FIX/spec.pdf"
+printf '%%PDF-1.4 hello pdf bytes\n' > "$PDF_FILE"
+run_hook "$HOMER" beforeReadFile "$(read_payload "$PDF_FILE")"
+assert_eq "$(posted_field rogueFileReadB64)" "$(b64_of "$PDF_FILE")" \
+  "beforeReadFile with an empty content attaches the pdf bytes"
+
+# ── Case 18: an svg read is captured too ──────────────────────────────────
+restart_mock '{}'
+SVG_FILE="$FIX/logo.svg"
+printf '<svg><desc>hi</desc></svg>\n' > "$SVG_FILE"
+run_hook "$HOMER" beforeReadFile "$(read_payload "$SVG_FILE")"
+assert_eq "$(posted_field rogueFileReadB64)" "$(b64_of "$SVG_FILE")" \
+  "an svg read is captured"
+
+# ── Case 19: the extension match is case-insensitive ──────────────────────
+# Nothing else here exercises the lowercasing: with only lowercase fixtures,
+# deleting the dispatcher's `tr` would leave every other case green. The stem
+# differs from case 17's so the two cannot alias on a case-insensitive
+# filesystem.
+restart_mock '{}'
+UPPER_FILE="$FIX/SHOUTY.PDF"
+printf '%%PDF-1.4 uppercase extension\n' > "$UPPER_FILE"
+run_hook "$HOMER" beforeReadFile "$(read_payload "$UPPER_FILE")"
+assert_eq "$(posted_field rogueFileReadB64)" "$(b64_of "$UPPER_FILE")" \
+  "an uppercase .PDF is captured (extension match is case-insensitive)"
+
+# ── Case 20: a NON-empty content attaches nothing ─────────────────────────
+# The extension is one the capture covers, so the content is the only thing
+# that can stop it; with a skipped extension this case would pin nothing.
+restart_mock '{}'
+BUSY_FILE="$FIX/busy.pdf"
+printf '%%PDF-1.4 already sent\n' > "$BUSY_FILE"
+run_hook "$HOMER" beforeReadFile "{\"content\":\"%PDF-1.4 already sent\\n\",\"file_path\":\"$BUSY_FILE\"}"
+assert_eq "$(posted_has_field rogueFileReadB64)" "no" \
+  "no capture when Cursor already sent the content"
+
+# ── Case 21: an extension outside the list attaches nothing ───────────────
+restart_mock '{}'
+PNG_FILE="$FIX/i.png"
+printf 'pngbytes' > "$PNG_FILE"
+run_hook "$HOMER" beforeReadFile "$(read_payload "$PNG_FILE")"
+assert_eq "$(posted_has_field rogueFileReadB64)" "no" \
+  "no capture for an extension outside the list"
+
+# ── Case 22: an over-cap .svg is truncated to exactly the cap ─────────────
+restart_mock '{}'
+BIG_SVG="$FIX/BIG.SVG"
+make_over_cap_file "$BIG_SVG"
+run_hook "$HOMER" beforeReadFile "$(read_payload "$BIG_SVG")"
+assert_eq "$(decoded_size rogueFileReadB64)" "1048576" \
+  "an over-cap .svg is truncated to exactly the cap"
+assert_eq "$(printf '%s' "$(posted_field rogueFileReadB64)" | base64 -d 2>/dev/null | grep -c TAILMARKER || true)" "0" \
+  "bytes past the cap are not sent"
+
+# ── Case 22b: an over-cap .pdf attaches NOTHING ───────────────────────────
+# Only a truncatable extension is cut at the cap; every other one is sent whole
+# or not at all, so case 22 cannot pass by disabling the capture wholesale.
+restart_mock '{}'
+BIG_PDF="$FIX/big.pdf"
+make_over_cap_file "$BIG_PDF"
+run_hook "$HOMER" beforeReadFile "$(read_payload "$BIG_PDF")"
+assert_eq "$(posted_has_field rogueFileReadB64)" "no" \
+  "an over-cap .pdf attaches nothing"
+
+# ── Case 22c: a .pdf exactly AT the cap is still sent whole ───────────────
+# Case 17 covers a tiny file; this one sits on the boundary, where an
+# off-by-one in the size comparison would show up.
+restart_mock '{}'
+NEAR_PDF="$FIX/near.pdf"
+awk 'BEGIN{while(i++<1048576)printf "a"}' > "$NEAR_PDF"
+run_hook "$HOMER" beforeReadFile "$(read_payload "$NEAR_PDF")"
+assert_eq "$(decoded_size rogueFileReadB64)" "1048576" \
+  "a .pdf exactly at the cap is sent whole"
+
+# ── Case 23: the fail-open paths leave the body untouched ─────────────────
+restart_mock '{}'
+run_hook "$HOMER" beforeReadFile "$(read_payload "$FIX/missing.pdf")"
+assert_eq "$(posted_has_field rogueFileReadB64)" "no" "a missing file attaches nothing"
+restart_mock '{}'
+run_hook "$HOMER" beforeReadFile "$(read_payload 'relative/x.pdf')"
+assert_eq "$(posted_has_field rogueFileReadB64)" "no" "a relative path attaches nothing"
+restart_mock '{}'
+EMPTY_PDF="$FIX/empty.pdf"
+: > "$EMPTY_PDF"
+run_hook "$HOMER" beforeReadFile "$(read_payload "$EMPTY_PDF")"
+assert_eq "$(posted_has_field rogueFileReadB64)" "no" "a zero-byte file attaches nothing"
+
+# ── Case 24: the capture is beforeReadFile-only ───────────────────────────
+restart_mock '{}'
+run_hook "$HOMER" postToolUse "{\"tool_name\":\"Read\",\"content\":\"\",\"file_path\":\"$PDF_FILE\"}"
+assert_eq "$(posted_has_field rogueFileReadB64)" "no" "no capture on another event"
+
+# ── Case 25: the jq path and the no-jq path post identical bodies ─────────
+restart_mock '{}'
+run_hook "$HOMER" beforeReadFile "$(read_payload "$PDF_FILE")"
+with_jq="$(posted_body)"
+restart_mock '{}'
+NOJQ_DIR="$(make_nojq_path)"
+# The farm stocks what main's cases need; the capture also sizes the file with
+# `wc -c`, and without it a no-jq run would attach nothing at all.
+ln -s "$(command -v wc)" "$NOJQ_DIR/wc" 2>/dev/null || true
+TEST_PATH="$NOJQ_DIR" run_hook "$HOMER" beforeReadFile "$(read_payload "$PDF_FILE")"
+rm -rf "$NOJQ_DIR"; NOJQ_DIR=""
+# restart_mock clears the record, so a no-jq run that posted nothing would
+# otherwise leave posted_body reading the jq run and matching it against itself.
+if [ -s "$HEADERS_FILE" ]; then nojq_posted="yes"; else nojq_posted="no"; fi
+assert_eq "$nojq_posted" "yes" "the no-jq run posts a request of its own"
+assert_eq "$with_jq" "$(posted_body)" "jq and string-concat paths produce identical bodies"
+
+# ── Case 26: a backslash in the path attaches nothing ─────────────────────
+# A deliberate divergence from hook.ps1, which unescapes and carries on. The
+# fixture exists and its extension is covered, so the backslash is the only
+# thing left that can stop the capture.
+restart_mock '{}'
+printf '%%PDF-1.4 backslash\n' > "$FIX/we\\ird.pdf"
+run_hook "$HOMER" beforeReadFile "{\"content\":\"\",\"file_path\":\"$FIX/we\\\\ird.pdf\"}"
+assert_eq "$(posted_has_field rogueFileReadB64)" "no" "a backslash in the path attaches nothing"
+
+# ── Case 27: no API key -> {}, exit 0, and NO request at all ──────────────
+# `{}` plus exit 0 proves nothing on its own: an unreachable server produces
+# exactly the same two. So the mock stays UP, and the env file for this run
+# carries ONLY a base URL pointing at it (no key, no actor vars). A dispatcher
+# that had lost its key gate would then land on the mock, where this case can
+# see it, instead of on the default host. The record snapshot is the assertion
+# that separates the two; the seeding run before it is what puts a record there
+# to compare against.
+restart_mock '{}'
+HOME27="$(new_home)"
+run_hook "$HOME27" preToolUse "$(payload_for 7a7a7a7a-1111-4111-8111-7a7a7a7a7a7a)"
+SNAP27="$HOME27/record.snap"
+cp "$HEADERS_FILE" "$SNAP27"
+HOME27B="$(new_home)"
+printf 'export ROGUE_BASE_URL=http://127.0.0.1:%s\n' "$PORT" > "$HOME27B/.rogue-env"
+set +e
+run_hook "$HOME27B" preToolUse '{"tool_name":"Shell","tool_input":{"command":"ls"}}'
+RC27=$?
+set -e
+assert_eq "$(cat "$OUT_FILE")" '{}' "unconfigured emits {}"
+assert_eq "$RC27" "0" "unconfigured exits 0"
+if cmp -s "$SNAP27" "$HEADERS_FILE"; then posted27="no"; else posted27="yes"; fi
+assert_eq "$posted27" "no" "unconfigured sends NO request (the mock's record is untouched)"
+
+# ── Case 28: no pre-image for a recognized binary extension ───────────────
+# Case 12 pins that preToolUse MAY add the pre-image; this pins when it must
+# not. Asserted with assert_body_identical, so an attached-but-empty field
+# fails it too.
+restart_mock '{}'
+HOME28="$(new_home)"
+PNG_TARGET="$HOME28/x.png"
+printf 'notreallyapng' > "$PNG_TARGET"
+run_hook "$HOME28" preToolUse "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$PNG_TARGET\",\"content\":\"x\"}}"
+assert_body_identical "no pre-image for a recognized binary extension"
 
 echo
 echo "All Cursor hook.sh tests passed (SH=$SH)."
